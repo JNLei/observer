@@ -64,8 +64,8 @@ with one record 72 hours old, a later same-lane export and a live control.
 Observe at least two retries after enqueuing the follower. Compare source
 metrics, receiver dispositions, Loki age discards and authenticated reads.
 The test ends with two synthetic history requests pending. The owner approved
-quarantine in principle. The proposed handoff and acceptance tests remain
-under review. [Loki custody ADR](../adr/PROPOSED-loki-poisoned-exports.md)
+quarantine in principle. A separate approved synthetic experiment exercises the
+source-custody contract. The stock Collector keeps this blocked-lane baseline. [Loki custody ADR](../adr/PROPOSED-loki-poisoned-exports.md)
 
 ## Subsequent representative profiles
 

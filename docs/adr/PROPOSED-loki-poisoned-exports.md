@@ -8,11 +8,12 @@ Downstream acknowledgement, source acceptance and query visibility each require
 their own evidence. A bare Loki 400 leaves individual commit outcomes unknown.
 Tenant authorization and provenance apply through inspection, replay and disposal.
 
-**For architecture review.** The contracts and acceptance tests below are
-proposed. The recommended first experiment uses one source-owned database
-transaction on an intact local disk. Production technology, capacity and
-retention values, a wire protocol and implementation authorization remain open.
-The current single-consumer lane can still stall. Full M1 and TEST-038 remain open.
+**Owner decision — MODIFY.** The independent review is complete. The owner
+authorized scenarios 1–7 for a synthetic logs source and queue owner, one
+private synchronous bbolt database, the existing Rust and Go OTLP receivers,
+and real Loki. Production integration, technology selection and scenario 8
+require separate authorization and independent review. Full M1 and TEST-038
+remain open.
 
 ## Evidence and current operator signal
 
@@ -129,43 +130,58 @@ one consumer per lane and unlimited retry time. [Trial configuration](../../benc
 | Apache Kafka transaction, 4.2 API | When Kafka owns the input, a transactional producer can publish the parked envelope and enlist the group's next contiguous offset with `sendOffsetsToTransaction`. Disable independent commits, fence stale owners and use `read_committed`. Topic retention can delete unread segments, so source preservation and hard tenant capacity need separate enforcement. This alternative introduces a broker and a transactional consumer. [Producer transaction contract](https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/producer/KafkaProducer.html) · [Consumer isolation](https://kafka.apache.org/42/configuration/consumer-configs/#isolation.level) · [Topic retention](https://kafka.apache.org/42/configuration/topic-configs/#retention.bytes) |
 | RabbitMQ 4.2 quorum queues | Opt-in at-least-once dead lettering with `reject-publish` retains the source message until the target confirms. A full target can delay that confirmation. Target retries can produce copies, so a source using this broker would still need stable entry IDs, an idempotent logical receipt and tenant-bound classification. [Quorum queue dead lettering](https://www.rabbitmq.com/docs/4.2/quorum-queues#dead-lettering) |
 
-## Narrow implementation recommendation
+## Approved experiment
 
-**Review a source-local proof first.** If authorized, give a synthetic source
-one private database with synchronous bbolt commits. Use one `DB.Update` for
-the conditional transfer. Drive the existing receivers and real Loki with one
-history consumer, an operator-selected mixed batch and a valid follower. Use
-a second tenant for isolation. Exercise durable enqueue, transfer, restart
-and receipt lookup. This isolates the queue-owner work without introducing
-a new classifier, broker or custom Collector exporter.
+The source admits only generated fixture sequence numbers and event times.
+Apply the versioned allowlist and retention window before writing any bytes.
+The original payload for custody is the admitted, sanitized OTLP protobuf.
+Use ephemeral fixture credentials and verified tenant grants. Keep expected
+IDs, record counts and independently encoded digests outside the databases
+under test. External restore evidence contains protected metadata only.
 
-Promotion to the real trial requires a supported queue-owner integration that
-persists the ID at enqueue, restores it, and controls the release transaction.
-The reviewed stock Collector configuration exposes no such hook. Keep private
-Collector queue files outside the proof. If a supported upstream integration
-cannot provide these boundaries, return for a choice between a narrowly
-scoped upstream queue change and a broker-owned source trial. An exporter
-alone cannot make a separate queue deletion atomic.
+The synthetic owner has one FIFO active lane per tenant. Hold its single
+writer through the capacity check, receipt and quota update, retention of the
+original bytes and removal of active membership. A store send has a separate
+durable lease and executes outside that transaction. An uncertain transfer
+closes the dispatch gate until durable state has been reconciled. A manual
+park can preserve an unresolved batch and release its follower. Count positive
+query evidence independently of unresolved record attempts.
 
-## Acceptance tests proposed for review
-
-The bbolt 1.5.0 library checks `TestDB_Update`, `TestTx_Rollback` and
-`TestDB_MaxSizeNotExceeded` passed locally with Go 1.27.4. They exercise
-database commit, rollback and refused file growth. The eight quarantine
-scenarios below are proposed and unrun. Use deterministic fault points,
-a durable custody ledger and independent reads. The baseline regression
-continues to expect a blocked history lane until the integrated gate passes.
-
-| Test | Required observation |
+| Scenario | Evidence required to pass the experimental gate |
 | --- | --- |
-| Crash and lost receipt | Kill before transfer, during commit, after commit before receipt delivery, and again during recovery. On intact-disk restart each accepted ID has exactly one logical custodian. Repeating a committed handoff returns the same receipt and consumes no extra quota. A corrupt or unreadable receipt holds dispatch. |
-| Identity and contention | Race two owners and repeat a command after restart. One transition wins. Identical payloads with different entry IDs remain separate. A receipt for another tenant or entry, a conflicting digest or a stale lease cannot release the entry. |
-| Ordinary outage and configuration fault | Hold Loki offline beyond the diagnostic retry threshold, inject 429/503 and lost replies, and restart the source. No automatic parking or disposal occurs. Restore service and recover eligible records at their original event times. A credential fault holds work until authorization is restored. |
-| Mixed and wholly expired exports | Use real Loki with an expired and an eligible member and a separate all-expired batch. A bare 400 establishes no per-record rejection. Keep positive visibility where observed. On authorized parking, the whole mixed unit gets one custody receipt, zero store-success credit, and its later valid same-lane follower becomes queryable. |
-| Capacity and storage failure | Fill a one-entry tenant quota, then the global byte limit. Race the last slot and inject write/sync failure. A refused transfer keeps its active payload and applies backpressure. An indeterminate commit blocks until reconciled. New demand receives no false acceptance. A tenant with reserved room can progress until the shared limit binds. Free capacity and retry without a second charge. |
-| Replay, isolation and confidentiality | Try cross-tenant lookup and replay, forged tenant/service claims, a revoked operator, duplicate replay commands and a lost Loki ACK. No protected data escapes. At most one replay intent exists per command. Recheck policy at dispatch, preserve timestamps and lineage, and measure possible duplicates and unknown attempts independently. |
-| Retention and disposal | Expire a review deadline, apply a hold, then exercise authorized deletion and restore an older snapshot. Verify review/hold behavior, disposal audit and absence of payload access or replay after deletion. Disposed unknown writes retain their historical uncertainty. |
-| Integrated exit gate | On both Rust and Go paths, separate enqueue acknowledgements, custody receipts, local rejects, store 204s and query results. Repeat the 120-record unpaced and controlled overlap runs, exact multiset reads before/after restart, and the same-lane poison/follower case. Queue depth or Collector sent counts alone cannot pass this gate. |
+| 1. Crash and lost receipt | Kill before transfer, inside the bbolt commit, after commit before receipt delivery and during recovery. On a new process opening an intact disk, compare each accepted ID, digest, exclusive membership, receipt and charge against an independent inventory. Repeating the committed transfer returns the original receipt. Corrupt or unverifiable custody evidence fences dispatch. |
+| 2. Identity and contention | Race workers, deliver stale completions, repeat a command after restart and submit identical payloads under distinct source IDs. Check entry, generation, digest and tenant bindings and verify one logical transfer per entry. |
+| 3. Outage and credentials | Exercise unavailable Loki, throttling, retryable failure, loss of a successful reply and authenticated receiver refusal. Keep source custody across restart, hold known credential failures until authorized repair and verify eligible records by original event time after recovery. |
+| 4. Expired and mixed batches | Correlate real Loki 400s, receiver 503s, unknown record attempts and tenant-scoped queries for each receiver. Find the eligible mixed member before authorized whole-batch parking, with its follower still absent. The next send on the same lane must make that follower queryable. A bare all-expired 400 also leaves outcomes unknown. |
+| 5. Finite capacity | Enforce tenant and global entries and bytes, including room reserved for the other tenant. Race the last slot, roll back a staged transfer, inject storage/commit failures, reconcile both possible commit outcomes and refuse new enqueue acknowledgements when active storage fills. Retry after freeing space and check all charges. |
+| 6. Replay and privacy | Bind each immutable command to verified actor, tenant, entry, digest, action and policy. Recheck grants, age, destination, capture, hold and disposal at dispatch. Try forged claims, cross-tenant commands, restricted payload access, revocation and concurrent duplicate sends. Retain unknown history and require a new authorized command naming the uncertain replay before resending. |
+| 7. Retention and restore | Start review time at transfer. Retain on legal hold. Record an idempotent disposal and preserve historical uncertainty. Restore an older backup and fence inspection, payload export and both dispatch paths on every open until current external disposition evidence is reconciled. Missing evidence or missing required bytes keeps the image inaccessible. |
+
+## Scenario 8 and production gates
+
+Scenario 8 is deferred. In Collector 0.165.0 the completion callback preserves
+shutdown errors and retires other completed requests, including terminal
+errors. Its cleanup fallback can delete the item before saving updated
+metadata. On startup the queue fetches dispatched entries, deletes their old
+keys in a separate batch and then reinserts each recovered request at a new
+index. A second crash after deletion and before reinsertion can strand the
+only recoverable payload. An index can change across restart. The OTLP
+exporter cannot transact with either cleanup path. [Pinned completion](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.165.0/exporter/exporterhelper/internal/queue/persistent_queue.go#L360-L392)
+and [pinned recovery and fallback](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.165.0/exporter/exporterhelper/internal/queue/persistent_queue.go#L412-L503).
+
+Before any integrated trial, independently review a supported queue-owner
+interface with stable identity at admission, authenticated attribution across
+restart and control of both completion and restart recovery. Obtain separate
+owner authorization before implementing it. Repeat the transfer crash matrix,
+including a crash during recovery, mixed poison/follower queries for both
+receivers, and all four 120-record recovery/overlap runs. A synthetic-owner
+result supplies no evidence for the Collector's private queue transactions.
+
+Production adoption additionally requires an approved owner, threat and
+failure model, authoritative external disposition service, backup and deletion
+horizon, physical resource limits, representative multi-signal workloads and
+the applicable architecture gates. The experimental policy durations, quotas
+and data file limit apply only to generated fixtures.
 
 Traceability covers REQ-008/016/025/029/035/036, ADR-I4/I5 and
 ADR-REC-01/02/03/05/06. The proposed gates contribute to TEST-030,

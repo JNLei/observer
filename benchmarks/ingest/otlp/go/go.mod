@@ -3,6 +3,7 @@ module example.invalid/observe/otlp-benchmark
 go 1.27.4
 
 require (
+	go.etcd.io/bbolt v1.5.0
 	go.opentelemetry.io/proto/otlp v1.11.1
 	golang.org/x/net v0.59.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc
