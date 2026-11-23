@@ -75,6 +75,8 @@ new ignored results directory. It models 24 hours of **event time** and tests
 real process failure with ongoing live writes and reads. See the
 [predeclared workload charter](docs/implementation/workload-charter.md) and
 [OTLP trial contract](docs/implementation/benchmark.md#otlp-logs-and-restart-trial).
+The [M1 validation record](docs/implementation/validation-m1-logs.md) includes
+the measured restart and visibility results for both receivers.
 
 Run the reproducible **functional smoke**, without comparing performance:
 
