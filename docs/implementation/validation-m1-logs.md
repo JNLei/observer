@@ -37,6 +37,13 @@ tested commit. Its recovery JSON includes the raw per-lane series, overlap
 samples, pending dispositions, binary hashes and query digest.
 [Workflow](../../.github/workflows/ci.yml)
 
+The first hosted race-instrumented run also exposed a timing dependency in
+the existing 413 conformance case. A receiver can send its early refusal
+while a client is still writing the oversized body. The test now uses
+`Expect: 100-continue` for the declared-length refusal and separately sends
+an oversized chunked body to exercise the streaming limit on both receivers.
+[Initial hosted run](https://github.com/JNLei/observer/actions/runs/45107705058)
+
 ## Original local observation
 
 The following measurements refer to a clean local run of
