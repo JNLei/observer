@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"crypto/rand"
@@ -92,11 +93,7 @@ func startFixture(t *testing.T, binary string, store http.HandlerFunc) *fixture 
 }
 
 func (f *fixture) request(method, path, token string, data []byte, headers map[string]string) observation {
-	return f.requestBody(method, path, token, bytes.NewReader(data), headers)
-}
-
-func (f *fixture) requestBody(method, path, token string, body io.Reader, headers map[string]string) observation {
-	req, err := http.NewRequest(method, f.addr+path, body)
+	req, err := http.NewRequest(method, f.addr+path, bytes.NewReader(data))
 	if err != nil {
 		return observation{err: err}
 	}
@@ -112,8 +109,47 @@ func (f *fixture) requestBody(method, path, token string, body io.Reader, header
 		return observation{err: err}
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(res.Body)
-	return observation{res.StatusCode, data, err}
+	body, err := io.ReadAll(res.Body)
+	return observation{res.StatusCode, body, err}
+}
+
+// Flush the complete chunked request in one write. A receiver can reply as
+// soon as byteLimit+1 arrives. net/http's concurrent body writer can otherwise
+// lose that response to a broken pipe while flushing the terminating chunk.
+func (f *fixture) checkStreamedLimit(t *testing.T, payload []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, f.addr+"/v1/logs", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Close = true
+	req.Header.Set("Content-Type", media)
+	req.Header.Set("Authorization", "Bearer "+f.a)
+	var wire bytes.Buffer
+	if err = req.Write(&wire); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp", req.URL.Host, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = wire.WriteTo(conn); err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("streamed request returned HTTP %d, want 413", res.StatusCode)
+	}
 }
 func (o observation) want(t *testing.T, code int) []byte {
 	t.Helper()
@@ -234,8 +270,7 @@ func TestOTLPValidationAndDisclosure(t *testing.T) {
 		oversized := make([]byte, byteLimit+1)
 		// Observe the early Content-Length rejection before writing the payload.
 		send(oversized, map[string]string{"Expect": "100-continue"}).want(t, 413)
-		// An unknown length forces chunked transfer and exercises the streaming limit.
-		f.requestBody("POST", "/v1/logs", f.a, io.NopCloser(bytes.NewReader(oversized)), nil).want(t, 413)
+		f.checkStreamedLimit(t, oversized)
 		send(gz(t, make([]byte, byteLimit+1)), map[string]string{"Content-Encoding": "gzip"}).want(t, 413)
 		send(fixtureWire(t, make([]int64, 257)...), nil).want(t, 413)
 		f.request("POST", "/v1/logs", "", raw, nil).want(t, 401)
