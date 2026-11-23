@@ -1,0 +1,52 @@
+auth_enabled: true
+analytics:
+  reporting_enabled: false
+server:
+  http_listen_network: unix
+  http_listen_address: "${TRIAL_DIR}/loki-http"
+  http_listen_port: 0
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: ${LOKI_GRPC_PORT}
+  log_level: warn
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: "${TRIAL_DIR}/loki"
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: "${TRIAL_DIR}/loki/chunks"
+      rules_directory: "${TRIAL_DIR}/loki/rules"
+  ring:
+    kvstore:
+      store: inmemory
+ingester:
+  lifecycler:
+    min_ready_duration: 0s
+  max_chunk_age: 52h
+  wal:
+    enabled: true
+    dir: "${TRIAL_DIR}/loki/wal"
+    flush_on_shutdown: false
+    replay_memory_ceiling: 128MB
+schema_config:
+  configs:
+    - from: "2020-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: m1_
+        period: 24h
+limits_config:
+  query_timeout: 2s
+  allow_structured_metadata: true
+  reject_old_samples: true
+  reject_old_samples_max_age: 48h
+  unordered_writes: true
+querier:
+  max_concurrent: 2
+  query_ingesters_within: 52h
+query_range:
+  cache_results: false
+compactor:
+  working_directory: "${TRIAL_DIR}/loki/compactor"

@@ -1,13 +1,70 @@
-# Rust versus Go: benchmark design and current scope
+# Rust versus Go benchmark design
 
-This is a **functional test foundation, not the production-shaped language
-comparison** in architecture §24.2. It does not establish a performance
-winner, storage choice, language commitment, recovery guarantee, SLO or
-security claim. M1 is partial; TEST-038 is not passed. No numeric release
-threshold is selected. Use [roadmap M2](roadmap.md#m2--production-shaped-language-and-recovery-gate)
-for the required next gate.
+The [workload charter](workload-charter.md) defines the paired workloads and
+unresolved scoring criteria. The original synthetic baseline and the OTLP log
+trial have different acknowledgement boundaries. TEST-038 remains open.
 
-## What is runnable now
+## OTLP logs and restart trial
+
+Run `./scripts/check.sh` for protocol conformance, `./scripts/check-race.sh`
+for Go race instrumentation and `./scripts/bench-recovery.sh` for the real
+source-to-query trial. Each recovery run creates an ignored JSON report with
+its revision, dirty status, dependency/binary hashes, source dispositions,
+receiver counters, visibility samples, latency distributions and per-process
+resource usage. Both variants use the same absolute fixture epoch. The
+checked-in YAML files contain environment references for ephemeral credentials.
+
+| Boundary | Observable behavior |
+| --- | --- |
+| Source | The stock Collector receives generated OTLP/HTTP JSON, persists an export request in a finite source-owned queue and replies. Each history/live queue holds 64 requests with one consumer and fsync enabled. The exporter sends gzip binary protobuf, backs off on retry, and records terminal dispositions. The source can retain the original synthetic body. |
+| Admission | Both receivers decode the official log export schema and accept only the fixture profile. Both credentials use the same read/write policy on their respective tenant. Resource, scope, arbitrary attributes and free text are stripped. The credential supplies tenant/producer scope. Each accepted record retains original event/observed timestamps, severity, trace/span correlation, the low 8 flag bits and a generated line derived from a positive integer `bench.seq`. Record order within the export is preserved. |
+| Write | Each sanitized nonempty batch is sent once per upstream attempt to Loki on a private Unix HTTP socket. Only the pinned Loki handler's HTTP 204 confirms a write. A different status, timeout, disconnect or redirect yields 503 with an unknown write outcome. No receiver-side retry. The source owns retries. |
+| OTLP response | Full success is HTTP 200 with an empty protobuf response. Mixed batches report a protobuf partial success after the eligible subset receives 204. Do not retry the entire partial batch. Empty exports succeed without a store write. Wholly invalid records or malformed protobuf return 400, missing/invalid credentials 401, oversize 413, unsupported format/encoding 415 and full tenant admission 429. Error bodies use fixed google.rpc.Status messages. |
+| Visibility | The private authenticated read accepts only a start/end pair, with a fixed service selector, credential-derived tenant, 26-hour maximum window, 512 returned rows and 512 KiB response cap. Loki allows 48-hour-old samples and a same-stream reordering window of 26 hours. Polling gives an upper bound on first visibility. The probe verifies actual timestamp, sanitized line, observed timestamp, severity and trace/span IDs in range-query results. |
+| Counters | Per-tenant admitted, invalid, acknowledged, unknown and outstanding **record attempts** are distinct from unique visible records. The synchronized snapshot conserves admitted = acknowledged + unknown + outstanding. Input bytes count validated request bodies on the wire. ACK bytes count sanitized protobuf payloads receiving 204. Pre-decode rejection has no inferred record count. |
+
+The HTTP listeners cap active connections at 12. Each tenant has three
+write reservations, one downstream writer and one independent reader. A
+maximum of two decoders run concurrently, with 64 KiB wire/inflation limits
+and a 256-record request cap. The OS listen backlog, library buffers and
+decoded object overhead are additional. Header/body/store deadlines bound
+local work. A caller timeout can leave a queued or active transaction. Its
+reservation stays occupied through local completion or downstream timeout.
+Loki's query timeout and query concurrency limits apply independently.
+The conformance sink can confirm residual work while a client has timed out.
+Full S03/S10 pressure and residual-work validation remains pending.
+
+The harness uses a trusted single-user host, private scratch directory,
+loopback-only source, gateway and internal Loki gRPC listeners, and a private
+Loki HTTP socket. Credential checks protect source submission, receiver
+admission and the benchmark read API. The operator controls the binaries,
+local disk and internal service endpoints. This trust assumption limits the
+evidence for production shared-host isolation, revocation and service identity.
+
+Loki's ingester acknowledges a write under its configured WAL behavior. A
+successful write alone cannot establish disk/node/power-loss survival. The
+trial reads WAL metrics, kills the store process and checks original-time
+visibility again using its existing disk. Source queues live outside the
+receiver and resume after a Collector process kill. The runner also brings up
+the receiver with the store unavailable, observes failed writes and retained
+source demand, then kills and restarts the receiver before healthy replay.
+Identical physical writes
+may be deduplicated on query. Optional processing stages have no measured
+watermark in this trial. [OTLP responses](https://opentelemetry.io/docs/specs/otlp/),
+[Collector resilience](https://opentelemetry.io/docs/collector/resiliency/),
+[Loki write handler at v3.7.10](https://github.com/grafana/loki/blob/v3.7.10/pkg/distributor/http.go)
+and [Loki WAL failure scope](https://grafana.com/docs/loki/latest/operations/storage/wal/).
+
+Rust uses Hyper, Prost and generated opentelemetry-proto log messages. Go uses
+net/http and generated OpenTelemetry protobuf messages. Each forwards an
+uncompressed sanitized batch over a new Unix HTTP connection. Both builds
+pin their dependency graphs. Parser internals, HTTP header parsing slack,
+runtime scheduling, allocations and GC differ. The native trial has no CPU,
+RSS, network or disk throttling. Fixed order and a single pair permit
+functional comparison only. [Rust generated bindings](https://docs.rs/opentelemetry-proto/0.33.1/opentelemetry_proto/)
+and [Go generated bindings](https://pkg.go.dev/go.opentelemetry.io/proto/otlp@v1.11.1/collector/logs/v1).
+
+## Original synthetic baseline
 
 `benchmarks/ingest/{rust,go}` implement the same private synthetic protocol
 and downstream behavior using only each language's standard library. Both are
@@ -116,7 +173,7 @@ runs variants sequentially and does not control machine load, quotas, warmup,
 trial ordering, CPU affinity or deployment-level memory. Its numbers are not
 suitable for scoring.
 
-## Workload charter and full comparison still required
+## Conditions for a scored comparison
 
 Before a scored run, the owner must approve a profile specifying workload and
 payload distributions, candidate baseline(s), arrival model, machine and
@@ -156,10 +213,10 @@ projection/evaluation lag. Model capacity as `B / (μ − λ)` only when the
 constant-rate assumptions hold and `μ > λ`. Clearing 24 hours of backlog in one
 hour while normal traffic continues illustrates roughly 25× steady capacity; it
 is **not** an adopted one-hour SLO. A scaled simulation is useful during
-development but cannot replace the actual endurance test. This repository does
-not yet have a durable source queue, history replay, fresh/backlog scheduler,
-query visibility, or an executable REC-REF-24 run. The million-event harness cap
-also prevents many realistic 24-hour profiles. REC-REF-24 is **unrun**.
+development but cannot replace the actual endurance test. M1 implements a
+finite simulated history, persistent queues and query probes for logs. The
+million-event synthetic harness also has a separate accounting ceiling.
+The wall-clock REC-REF-24 endurance run is **unrun**.
 
 No pass/fail or release-readiness claim can be made without the approved charter,
 production-shaped implementations, end-to-end reconciliation, full recovery

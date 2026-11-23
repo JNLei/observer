@@ -10,9 +10,9 @@ for script in scripts/*.sh; do
 done
 
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo build --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo build --locked --workspace
 
 (
     cd benchmarks/ingest/go
@@ -25,5 +25,17 @@ cargo build --workspace
     go test ./...
     go build -buildvcs=false -o ../bin/ingest-bench-go .
 )
+(
+    cd benchmarks/ingest/otlp/go
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        printf 'Go files require gofmt:\n%s\n' "$unformatted" >&2
+        exit 1
+    fi
+    go vet -mod=readonly ./...
+    go build -mod=readonly -buildvcs=false -o ../../bin/otlp-bench-go .
+    go test -mod=readonly -count=1 -v ./...
+)
+python3 -m py_compile benchmarks/ingest/otlp/*.py
 python3 -m py_compile benchmarks/ingest/harness.py benchmarks/ingest/tests/test_conformance.py
 python3 -m unittest discover -s benchmarks/ingest/tests -v

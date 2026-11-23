@@ -52,29 +52,32 @@ features are enabled; their tests are not waived by the milestone sequence.
 - **Status:** locally accepted after independent re-review, as reported by the
   owner. Both non-blocking P3 findings are closed. The health endpoint now
   checks header field syntax and the synthetic sink distinguishes attempted,
-  failed and successful acknowledgement writes. Hosted CI is unverified.
+  failed and successful acknowledgement writes. The first
+  [hosted foundation run](https://github.com/JNLei/observer/actions/runs/45100149504)
+  passed after Git initialization.
   The [original validation record](validation-2026-11-22.md) describes the
   earlier review and its local regression checks.
 
-## M1 — Reproducible benchmark foundation
+## M1 — Workload charter and first production-shaped comparison
 
-- **Objective / deliverables:** matched Rust/Go synthetic bounded forwarding
-  slice, open-loop generator, fixed-rate and burst phases, disconnect/reconnect
-  and stall injection, classified outcomes and reproducible scenario files.
-- **Components / dependencies:** M0 tools, pinned compiler versions, local
-  synthetic sink; no persistent store, production data or network access.
-- **Traceability:** REQ-029, REQ-035–039; ADR-I4, ADR-REC-01–06,
-  ADR-LANG-01, ADR-BENCH-01; preliminary portions of TEST-030, TEST-035–038
-  and TEST-054. S03, S10 and S13 remain gates for applicable production or
-  scored work; see [benchmark design](benchmark.md).
+- **Objective / deliverables:** retain the synthetic baseline, predeclare a
+  [workload charter](workload-charter.md) and exercise real log ingestion,
+  restart, replay with live traffic and independent reads in Rust and Go.
+- **Components / dependencies:** an authenticated isolated benchmark receiver,
+  generated OTLP protobuf models, Collector persistent sending queues and a
+  single-node Loki WAL trial. The same harness drives both release binaries.
+- **Traceability:** REQ-008, 025–029, 035–039, ADR-I1/I2/I4/I5,
+  ADR-REC-01–06, ADR-LANG-01 and ADR-BENCH-01. Partial coverage of
+  TEST-029–030, 032–038, 043–044, 051 and 054. S03, S04, S10, S13 and S14
+  apply at the full comparison gate. See the [benchmark design](benchmark.md).
 - **Acceptance / validation:** both variants pass identical protocol/error,
   overflow, stall, interruption, reconnection and accounting checks. Record
   any gaps without presenting a microbenchmark as language evidence.
-- **Blocking decisions:** none for the synthetic slice. A scored comparison
-  requires an owner-approved workload, SLO/cost and loss charter and candidate
-  integrations; those decisions remain open.
-- **Status:** partial: a functional synthetic slice and test harness exist;
-  production-shaped parity, durable replay and the language decision are open.
+- **Blocking decisions:** the owner selected the Collector and Loki for the
+  process-restart trial. Scoring requires representative workload evidence,
+  approved SLO/cost/loss criteria and additional signal candidates.
+- **Status:** the logs slice is implemented and available for independent
+  review. The full scored multi-signal recovery and language gate is open.
 
 ## M2 — Production-shaped language and recovery gate
 
@@ -99,7 +102,9 @@ features are enabled; their tests are not waived by the milestone sequence.
 - **Blocking decisions:** approved workload/SLO/cost charter; auth and capture
   trial policy; candidate store/queue and durability/lateness scopes. Record
   candidate substitutions and do not silently promote them to product choices.
-- **Status:** not started; M1 does not satisfy TEST-038.
+- **Status:** the M1 log trial contributes protocol, replay and visibility
+  evidence. Full multi-signal, isolation, endurance and language acceptance
+  remain open.
 
 ## M3 — Local identity, authorization and headless management slice
 

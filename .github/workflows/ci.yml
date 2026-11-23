@@ -22,3 +22,5 @@ jobs:
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - name: Format, lint, build and test
         run: ./scripts/check.sh
+      - name: Exercise Collector and Loki restart recovery
+        run: ./scripts/bench-recovery.sh

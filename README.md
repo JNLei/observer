@@ -1,11 +1,14 @@
-# AI-native observability platform: foundation
+# AI-native observability platform
 
 This repository contains an early repository foundation, not a working
 observability platform. The intended architecture is described by the
 [authoritative v0.5.1 specification](docs/architecture/AI_Native_Observability_Architecture_Spec_v0.5.1.md).
-The current code provides a local process-liveness endpoint and a separate,
-synthetic Rust/Go forwarding test. It does not ingest telemetry, provide
-management, authorization, storage, evidence, alerts or durable recovery.
+The repository includes a local process-liveness endpoint and two Rust/Go
+benchmark paths. The production-shaped slice sends generated OTLP logs through
+an OpenTelemetry Collector disk queue to matched receivers and a single-node
+Loki trial. It checks acknowledgements, tenant-scoped queries, original event
+times and recovery after process restarts. A separate synthetic forwarder
+preserves the original baseline.
 
 The four architectural planes are logical boundaries. The eventual self-hosted
 backend must be usable without the optional UI, built-in agent, evaluation
@@ -21,8 +24,11 @@ records the local checks and smoke observations.
 - Rust **1.100.0**, including `rustfmt` and `clippy`; `rust-toolchain.toml`
   lets [rustup](https://rustup.rs/) install the pinned toolchain.
 - Go **1.27.4** for the reference build; the Go module sets this minimum.
-- Python **3.10+**, a POSIX shell and `curl`. There are no third-party runtime
-  dependencies in the current Rust, Go or Python code.
+- Python **3.10+**, a POSIX shell and `curl`. Cargo.lock and the OTLP Go
+  module pin the protocol dependencies. The first build requires registry
+  access. The recovery script fetches checksum-verified native releases of
+  Collector Contrib **0.165.0** and Loki **3.7.10** for macOS/Linux on
+  arm64/amd64. Recovery uses disposable private directories on local disk.
 
 The checks have been designed for macOS/Linux. On a system with multiple
 compilers, put the intended Rust and Go binaries on `PATH` and verify
@@ -54,12 +60,21 @@ authenticated management API. Non-loopback listeners are rejected.
 ./scripts/check.sh
 ```
 
-The script checks Rust formatting and Clippy, runs Rust tests, checks Go
-formatting and `go vet`, builds both prototypes, and runs the same Python
-protocol/failure/accounting tests against both binaries. The health integration
-test starts the actual Rust process. CI runs this same script on Linux. These
-checks do not constitute the architecture's complete TEST-001 headless or
-TEST-038 language acceptance procedures.
+The script checks formatting, Clippy, Go vet, builds, health integration,
+synthetic accounting and cross-language OTLP conformance. GitHub Actions runs
+it and the real recovery trial on Linux. The local Go race pass also exercises
+the instrumented binaries through their network endpoints.
+
+```sh
+./scripts/check-race.sh
+./scripts/bench-recovery.sh
+```
+
+The recovery script writes per-variant results and environment metadata to a
+new ignored results directory. It models 24 hours of **event time** and tests
+real process failure with ongoing live writes and reads. See the
+[predeclared workload charter](docs/implementation/workload-charter.md) and
+[OTLP trial contract](docs/implementation/benchmark.md#otlp-logs-and-restart-trial).
 
 Run the reproducible **functional smoke**, without comparing performance:
 
@@ -76,6 +91,8 @@ recovery scenario; see [benchmark limitations](docs/implementation/benchmark.md)
 - `backend/health/`: small loopback-only Rust process liveness component.
 - `benchmarks/ingest/`: matched Rust/Go synthetic forwarders, bounded workload
   generator, mock downstream, scenarios and conformance tests.
+- `benchmarks/ingest/otlp/`: matched OTLP receivers, shared conformance suite,
+  Collector/Loki configurations, fetch utility and recovery runner.
 - `agents/`, `evaluation/`: reserved for independently deployable Python
   runtimes, not implementations or chosen frameworks.
 - `ui/`: reserved for the optional presentation client; no UI is implemented.

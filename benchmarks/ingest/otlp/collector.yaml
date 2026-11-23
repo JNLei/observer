@@ -1,0 +1,62 @@
+extensions:
+  file_storage:
+    directory: "${env:TRIAL_DIR}/source"
+    create_directory: true
+    fsync: true
+  bearertokenauth/source:
+    token: "${env:SOURCE_TOKEN}"
+receivers:
+  otlp/history:
+    protocols:
+      http:
+        endpoint: "127.0.0.1:${env:HISTORY_PORT}"
+        max_request_body_size: 65536
+        auth:
+          authenticator: bearertokenauth/source
+  otlp/live:
+    protocols:
+      http:
+        endpoint: "127.0.0.1:${env:LIVE_PORT}"
+        max_request_body_size: 65536
+        auth:
+          authenticator: bearertokenauth/source
+exporters:
+  otlp_http/history: &export
+    endpoint: "http://127.0.0.1:${env:RECEIVER_PORT}"
+    headers:
+      Authorization: "Bearer ${env:OBS_BENCH_TOKEN_A}"
+    compression: gzip
+    timeout: 2s
+    sending_queue:
+      enabled: true
+      sizer: requests
+      queue_size: 64
+      num_consumers: 1
+      storage: file_storage
+      block_on_overflow: false
+    retry_on_failure:
+      enabled: true
+      initial_interval: 200ms
+      max_interval: 1s
+      max_elapsed_time: 0s
+  otlp_http/live: *export
+service:
+  extensions: [file_storage, bearertokenauth/source]
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: ${env:METRICS_PORT}
+  pipelines:
+    logs/history:
+      receivers: [otlp/history]
+      exporters: [otlp_http/history]
+    logs/live:
+      receivers: [otlp/live]
+      exporters: [otlp_http/live]
