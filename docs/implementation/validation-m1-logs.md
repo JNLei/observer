@@ -24,9 +24,9 @@ probe recorded three Loki 400s and six unknown record attempts. The read
 showed one eligible member and one independent live record. The Collector
 still held two history requests. Counts of physical Loki writes remain unknown.
 
-The proposed source-owned quarantine would allow later same-lane work after
-an atomic, durable custody transfer. The existing implementation keeps
-retrying. Adoption requires owner approval. [Proposed ADR](../adr/PROPOSED-loki-poisoned-exports.md)
+The owner approved source-owned quarantine in principle. The measured
+implementation still retries and blocks the later same-lane export. Its
+replacement must pass the proposed custody tests. [Loki custody ADR](../adr/PROPOSED-loki-poisoned-exports.md)
 
 Run `./scripts/check.sh`, `./scripts/check-race.sh`, `./scripts/bench-smoke.sh`
 and `./scripts/bench-recovery.sh`. The recovery script builds both receivers,

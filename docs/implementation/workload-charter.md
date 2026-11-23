@@ -63,8 +63,9 @@ regression. Send one locally mixed-validity export, then a mixed-age export
 with one record 72 hours old, a later same-lane export and a live control.
 Observe at least two retries after enqueuing the follower. Compare source
 metrics, receiver dispositions, Loki age discards and authenticated reads.
-The test ends with two synthetic history requests pending. The proposed
-custody policy requires owner review. [Proposed Loki ADR](../adr/PROPOSED-loki-poisoned-exports.md)
+The test ends with two synthetic history requests pending. The owner approved
+quarantine in principle. The proposed handoff and acceptance tests remain
+under review. [Loki custody ADR](../adr/PROPOSED-loki-poisoned-exports.md)
 
 ## Subsequent representative profiles
 

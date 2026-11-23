@@ -78,7 +78,8 @@ features are enabled; their tests are not waived by the milestone sequence.
   approved SLO/cost/loss criteria and additional signal candidates.
 - **Status:** the reviewed single-node logs slice has corrected integrity,
   overlap and accounting checks. The permanent-rejection regression demonstrates
-  a blocked history lane. Durable quarantine awaits owner review. The full
+  a blocked history lane. The owner approved durable quarantine in principle.
+  Its handoff contract and implementation still require review. The full
   scored recovery and language gate remains open. [Review evidence](validation-m1-logs.md)
   and [proposed custody policy](../adr/PROPOSED-loki-poisoned-exports.md).
 
