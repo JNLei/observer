@@ -1,0 +1,1218 @@
+# AI-Native Observability Platform
+
+### Architecture Requirements, Boundaries, Evidence and Unified Observability v0.5
+
+Document status: Reconciled implementation specification v0.5
+Last updated: 2026-11-22
+Project stage: Architecture baseline selected; Rust-first preferred owned backend; production prototype and storage selection pending
+Intended readers: Project owner, implementation sessions, maintainers, reviewers, contributors
+
+**v0.5 reconciliation:** This revision incorporates the v0.4 architecture blueprint and the subsequent approved Rust-first/recovery direction. It supersedes v0.3 and the conversation's v0.4 design baseline. Sections 0–20 and their existing requirement/test IDs are retained. Sections 21–25 complete ingestion, canonical execution/evaluation, recovery, language validation, and implementation gates. Markdown is the maintained source; Word is an equivalent reading copy.
+
+**Decision summary:** Locked architecture: four planes; complete headless backend; shared authZ; Evidence Contract; A1–A8; D1–D6; I1–I6; recovery responsibilities REC-01–REC-06. Approved preferences: Rust for owned backend, Python for AI workers, TypeScript for the optional UI. Deferred hard choices: build versus integrate storage, exact engines, final schemas, policy engine, license, workload/SLO thresholds, and hybrid connectivity. A production-shaped Rust-versus-Go prototype is a required decision gate. No benchmark results are claimed by this specification.
+
+**Navigation:** Requirements (2); boundaries (3–4); performance (5, 23–24); evidence/context (6–10); decision register (11); unresolved decisions (12, 18, 25); acceptance (13, 23–25); unified AI observability (17); execution/evaluation (19); preservation (20); ingest (21); context and agents (22).
+
+> Authority and change control
+> This document is the project-level source of truth for agreed architecture and scope. It separates CONFIRMED decisions from PROPOSED / NOT YET APPROVED designs and DEFERRED implementation choices. An implementation session MUST NOT silently promote a proposed or deferred item to a confirmed requirement. Resolve only the decisions that block the task being implemented; ask the project owner at that point. If an implementation conflicts with a confirmed decision, stop and propose an Architecture Decision Record (ADR) instead of making the change implicitly.
+
+## 0. How to use this document in implementation sessions
+
+1. Read Sections 1–5 before starting architecture-affecting work. Read the relevant subsystem section and the acceptance tests in Section 13. For agent observability/evaluation, also read Sections 17–22. For performance or backend implementation, read Sections 23–25.
+
+1. Follow requirements marked CONFIRMED and with IDs REQ-* or decisions ADR-*.
+
+1. Treat items marked PROPOSED as design starting points, not settled external APIs or mandatory technologies.
+
+1. Treat DEFERRED choices as deliberately unresolved. When a specific implementation task truly needs the choice, offer a small number of options, trade-offs, and a recommended default; obtain the owner's decision before locking it in.
+
+1. Do not ask the owner to resolve every deferred item in advance. Do not invent decisions to avoid asking later.
+
+1. Add new architectural decisions to the decision register, with rationale and affected requirements. Keep the document versioned.
+
+1. Preserve API-only operation and authorization invariants even in a local prototype.
+
+1. Do not turn an illustrative code snippet, JSON object, technology example, benchmark number, or proposed service name into a hard requirement without an explicit decision.
+
+Requirement language: MUST = required for architectural compliance; SHOULD = expected unless a documented, justified exception is approved; MAY = optional. Status takes precedence: a PROPOSED MUST describes the proposed design, not an approved binding requirement.
+
+Decision statuses: CONFIRMED / LOCKED (approved architectural responsibility or invariant); PREFERRED (approved implementation direction, subject to the stated validation gate); PROPOSED (concrete representation or default awaiting validation); DEFERRED (hard choice not yet settled); SUPERSEDED (historical decision replaced explicitly); REFERENCE (external example, not a platform requirement). Locked does not mean impossible to revise: a conflicting change requires an explicit ADR. A required acceptance procedure does not imply its numeric threshold has been selected or that it has passed.
+
+## 1. Product vision and scope
+
+### 1.1 Vision — CONFIRMED
+
+Create a pure open-source, AI-agent-native observability platform. AI agents are first-class consumers of observability and operational data; the platform should help them investigate what happened, understand service and infrastructure context, test hypotheses, and provide prompt, accurate, evidence-backed insights. The platform must support extensive agent customization and company/project-specific context. It must also retain strong conventional observability operations and deployment/IaC support.
+
+Concise position: Machine-first investigation over reliable, modular observability infrastructure; human interfaces are optional clients, not the backend's reason to exist.
+
+### 1.2 Success criteria — CONFIRMED direction; quantitative thresholds DEFERRED
+
+- An organization can run the complete core backend without deploying the project's default UI.
+
+- Organizations can build their own UI or integrate their own agent using versioned, documented APIs.
+
+- Observability ingestion, storage, raw queries, and conventional alerting remain useful when all LLM/agent components are unavailable.
+
+- Agents can retrieve telemetry and operational context through a coherent contract without being coupled to a single storage engine.
+
+- Every high-level conclusion can be linked to the evidence used, with explicit uncertainty and completeness limits.
+
+- The product supports self-hosted deployment and standard IaC/DevOps workflows.
+
+- Traditional metrics/logs/traces performance is comparable with established products for representative target workloads; it is not required to outperform all competitors.
+
+- All core OSS capabilities remain available without an externally hosted control plane.
+
+### 1.3 Explicit non-goals for the initial architecture — CONFIRMED direction
+
+- Do not select a final metrics, logs, or traces backend prematurely.
+
+- Do not require one physical database for all telemetry types.
+
+- Do not require one particular LLM, agent framework, or UI. Owned backend language now has an approved Rust-first preference (Section 24); SDK clients and independent OSS components retain their own languages.
+
+- Do not make the AI runtime responsible for ordinary telemetry ingestion or routine alert evaluation.
+
+- Do not require a commercial or hosted service; possible future enterprise offerings are optional and should not compromise OSS independence.
+
+- Do not treat architectural examples from OpenObserve, Grafana, VictoriaMetrics, Braintrust, and other projects as prescribed implementations or exclusively as competitors. They are reference designs.
+
+## 2. Requirements register
+
+REQ-001–REQ-018 are retained from v0.2. Only the explicitly documented status updates below change their approval state. REQ-019–REQ-026 add approved A1–A8. REQ-027–REQ-039 add the reconciled decisions below.
+
+The REQ IDs are stable references for future tasks. If a requirement changes, change its status in an ADR rather than silently reinterpreting it.
+
+| ID | Requirement | Status | Acceptance implication |
+| --- | --- | --- | --- |
+| REQ-001 | Pure-OSS-first architecture; complete self-hostable core | CONFIRMED | No hosted service needed for core operation |
+| REQ-002 | Agent-native investigation rather than AI bolted onto a dashboard | CONFIRMED | Agent access/context/evidence are first-class APIs |
+| REQ-003 | Customizable agents, including organization-owned runtimes | CONFIRMED | Evidence APIs remain usable without built-in agent |
+| REQ-004 | Company-specific operational context (services, runbooks, deployments, IaC, changes) | CONFIRMED | Context has defined retrieval and update boundaries |
+| REQ-005 | High-quality traditional metrics, logs, traces foundation | CONFIRMED | Separate workload-specific performance evaluation |
+| REQ-006 | Comparable, not universally superior, performance versus mature systems | CONFIRMED | Controlled workload benchmarks determine fitness |
+| REQ-007 | Acceptable cost/retention/completeness trade-off, but agent must not overclaim missing data | CONFIRMED | Preserve limitations and sampling/retention signals |
+| REQ-008 | Unified authorization model for humans, service accounts, and AI agents | CONFIRMED | Same resource/action model; backend enforcement |
+| REQ-009 | UI and backend independently deployable; UI optional | CONFIRMED | Backend-only conformance tests |
+| REQ-010 | Custom company UIs via documented backend API | CONFIRMED | No essential UI-only operations |
+| REQ-011 | Conventional Terraform/OpenTofu, IaC, Kubernetes, and deployment workflows retained | CONFIRMED | Declarative management and deployment supported |
+| REQ-012 | Data plane may reside in customer infrastructure; future hybrid option should remain possible | CONFIRMED as design flexibility; not a release feature | No mandatory external control-plane dependency |
+| REQ-013 | Core telemetry and alerting independent of LLM availability | CONFIRMED | Outage isolation tests |
+| REQ-014 | Logical separation between Telemetry, Intelligence, Management/Security and Presentation | CONFIRMED as working boundary | Well-defined ownership and interfaces |
+| REQ-015 | Agent can access underlying evidence, not only opaque generated summaries | CONFIRMED direction | Source query, references, completeness available |
+| REQ-016 | Authorization must be enforced on actual data access, not only a UI or tool list | CONFIRMED | Query-scope and backend access checks |
+| REQ-017 | No high-cardinality IDs as ordinary metric labels | CONFIRMED direction in v0.3 under A5; exact limits DEFERRED | Trace/run IDs through traces, logs, exemplars |
+| REQ-018 | Canonical evidence envelope and semantic queries | CONFIRMED contract responsibilities and six principles in v0.3; schemas and specific semantic operations PROPOSED/DEFERRED | Sections 6–9; review exact interfaces before public API freeze |
+| REQ-019 | Unified traditional and AI-agent telemetry with canonical correlation | CONFIRMED in v0.3 (A1) | Correlate application, agent, model and tool operations without a separate incompatible trace tree |
+| REQ-020 | First-class agent observations, runs and sessions over canonical telemetry | CONFIRMED in v0.3 (A2) | Preserve source identity/provenance and relationships in AI projections |
+| REQ-021 | First-class evaluation, feedback, datasets and experiment records | CONFIRMED in v0.3 (A3) | Attach later/versioned judgments without rewriting execution history |
+| REQ-022 | Independent asynchronous evaluation service and workers | CONFIRMED in v0.3 (A4) | Evaluation outages/backlogs do not block production responses or telemetry |
+| REQ-023 | Separate operational metrics from evaluation-derived quality metrics | CONFIRMED in v0.3 (A5) | Retain canonical evaluation records and bounded metric cardinality |
+| REQ-024 | Shared authorization and complete headless evaluation APIs | CONFIRMED in v0.3 (A6) | Use evaluation with external agents and without default UI or hosted control |
+| REQ-025 | Policy-controlled content capture, privacy and provenance | CONFIRMED in v0.3 (A7) | Protect payload access/egress and surface unavailable evidence |
+| REQ-026 | Physical storage selection remains deferred | CONFIRMED in v0.3 (A8) | Select engines/layouts only after workload and operational evaluation |
+
+Additional requirements reconciled in v0.5:
+
+| ID | Requirement | Status | Acceptance implication |
+| --- | --- | --- | --- |
+| REQ-027 | Standardized entry points and independent signal pipelines | CONFIRMED I1–I2 | OTLP primary; additional adapters; avoid one generic physical bottleneck |
+| REQ-028 | Asynchronous, recoverable AI projections | CONFIRMED I3/I6 | Canonical ingest survives projection outage; rebuild only from retained authorized records |
+| REQ-029 | Explicit delivery states and security before platform persistence | CONFIRMED I4–I5 | Admission, durability, visibility and derived processing distinguished |
+| REQ-030 | Canonical execution identity, relationships and immutable finalized observations | CONFIRMED D1–D3 | Trace/span IDs retained; run/session mappings and links; revisions preserve provenance |
+| REQ-031 | Separate versioned evaluation and feedback history; derived quality analytics | CONFIRMED D4–D6 | Scores cannot rewrite execution; aggregates resolve to source judgments |
+| REQ-032 | Raw and semantic evidence access with deterministic bounded execution | CONFIRMED blueprint responsibility | APIs independent of built-in agent; exact operations/schemas deferred |
+| REQ-033 | Versioned context with provenance, freshness and desired/observed distinction | CONFIRMED blueprint responsibility | Structured service graph plus documents and validated history |
+| REQ-034 | Evidence, hypotheses and conclusions remain distinct | CONFIRMED blueprint responsibility | Agent claims cannot become trusted facts by repetition |
+| REQ-035 | Durable replay, fair live/backlog scheduling and explicit late-arrival policy | CONFIRMED REC-01–REC-03 | Crash/reconnect/fill/reorder tests; visible loss and completeness limits |
+| REQ-036 | Bounded adaptive concurrency and observable end-to-end recovery | CONFIRMED REC-04–REC-06 | Stable resources, fresh-data availability and queryable backlog measured |
+| REQ-037 | Rust-first owned backend; Python AI workers; optional TypeScript UI | PREFERRED; supersedes Go-first | Validate production-shaped implementation before broad commitment |
+| REQ-038 | Production-shaped Rust-versus-Go prototype and decision record | REQUIRED validation gate | Equal semantics/resources; correctness, recovery, tails, cost and maintainability reviewed |
+| REQ-039 | Traditional, AI, mixed-load and failure/recovery benchmark suites | CONFIRMED acceptance process; thresholds deferred | Comparable mature baselines on declared scenarios; no universal superiority claim |
+
+## 3. Architecture boundaries
+
+### 3.1 Four logical planes — CONFIRMED working architecture
+
+```
+                   OPTIONAL CLIENTS / PRESENTATION PLANE
+     OSS UI       Company UI        CLI/SDK/Terraform     External agents
+          \              |               |                  /
+                  Versioned, authenticated APIs
+                                |
+                 MANAGEMENT / SECURITY PLANE
+       local management API | tenant & config authority | policy
+                                |
+                 INTELLIGENCE / INVESTIGATION PLANE
+     evidence gateway | context | optional agent workers | evaluation
+                                |
+                   TELEMETRY DATA PLANE
+         ingest/route | metrics | logs | traces | raw query | alerts
+                                ^
+                        collectors / sources
+```
+
+The boundaries are logical service responsibilities, not necessarily four containers or clusters. Services can be combined for local installation if the required APIs, security, and UI independence remain intact.
+
+#### Plane 1: Telemetry Data Plane — CONFIRMED
+
+Owns: receivers, write path, buffering/WAL if applicable, indexing, storage, retention, raw query execution, backend-specific execution, deterministic alert/SLO evaluation, metrics/logs/traces availability and health.
+
+Does not own: autonomous reasoning, organization-specific diagnosis policy, prompt management logic, evaluation of agent conclusions, UI session state.
+
+Always-on principle: telemetry ingest and routine monitoring must not depend on LLM, agent worker, or presentation uptime.
+
+Performance principle: metrics, logs, and traces may use different internal engines, physical formats, indexing strategies and scaling methods.
+
+#### Plane 2: Intelligence & Investigation Plane — CONFIRMED ownership; interface details PROPOSED
+
+Owns: agent-facing Evidence Gateway, semantic retrieval/correlation, operational-context retrieval, investigation orchestration, hypothesis/evidence tracking, persisted investigation results, agent evaluations, optional built-in agent workers.
+
+Does not own: raw telemetry databases or privileged backend credentials exposed to users/agents, identity authority, underlying deployment orchestration.
+
+Deployability: Evidence Gateway must be usable without running the project's own agent. Built-in agent workers must be independently scalable and disable-able. The exact number of services is deferred.
+
+Important distinction: context source configuration and authorization are management concerns; context facts and their retrieval, versions, evidence and freshness are intelligence/data concerns.
+
+#### Plane 3: Management & Security Plane — CONFIRMED
+
+Owns: management API, tenant and resource configuration, identity integration, service accounts, policy definitions, agent permissions and budgets, configuration lifecycle, data-source registrations and credentials, audit policy, declarative configuration APIs.
+
+Security authority: an independently usable customer-hosted local management/policy authority must be available. A future remote management UI is optional and may be delegated bounded management responsibilities, but must not be necessary for core OSS operation.
+
+Distributed enforcement: the shared policy model is enforced at every sensitive service boundary (API, data query gateway, tool gateway, action executor, ingestion interfaces), not merely by a front-end permission check.
+
+#### Plane 4: Presentation Plane — CONFIRMED
+
+Owns: optional default OSS UI, presentation, custom UI adapters, CLI interaction and customer/hosted web interfaces. A CLI or Terraform provider calls management APIs; it is not the source of authorization truth.
+
+Does not own: business-critical state or privileged permission decisions. UI deployment, upgrades, outage, or deletion must not interrupt core backend operation.
+
+### 3.2 Trust boundary distinct from logical boundary — CONFIRMED
+
+By default the customer-controlled trust boundary contains sensitive telemetry, company/project context, investigation artifacts, authorization enforcement, production credentials, and privileged agent execution. Separate deployment units inside that boundary are permitted.
+
+A future hosted UI or management experience may communicate through explicitly authenticated and authorized APIs; it must not require a remote vendor service to approve every read or ingest. External model calls are data egress and need explicit administrator configuration, redaction, and permitted destination policy. A hosted UI alone cannot reach a private VPC endpoint without an approved connectivity design.
+
+### 3.3 Failure-boundary expectations — CONFIRMED direction
+
+| Unavailable component | MUST continue (given healthy dependencies) | Degraded functions |
+| --- | --- | --- |
+| Default UI | Ingestion, raw queries, alerts, backend admin APIs, enabled agent jobs | Default web experience |
+| External hosted UI/control | Complete self-hosted OSS operation | Remote convenience features |
+| Agent workers or LLM | Telemetry ingest/query, ordinary alerts, management | New AI investigations |
+| Evidence Gateway | Raw data read/write and ordinary alerts | Semantic evidence and agent tool APIs |
+| Management API transient outage | Existing telemetry pipelines and valid locally authorized operations within explicit freshness policy | Configuration changes; certain new permissions |
+| Individual metrics/logs/traces backend | Unaffected signal backends | Queries requiring failed signal; report partiality |
+| Query compute exhaustion | Ingestion SHOULD remain protected through workload isolation | Some queries may be throttled |
+
+Caveat: These are design targets. Credential expiry, revocation and policy-cache rules must be specified before production security claims are made.
+
+## 4. Deployment and API boundaries
+
+### 4.1 Supported deployment modes — CONFIRMED direction
+
+| Mode | Required components | UI | Notes |
+| --- | --- | --- | --- |
+| A. Local all-in-one OSS | Local backend + management + optional packaged intelligence | Included for convenience | Packaging convenience, not architectural coupling |
+| B. Headless OSS | All necessary backend services and local management/API | Absent | Fully supported, complete functional surface |
+| C. Split self-hosted OSS | Backend and default/custom UI independently deployed | Separate | Independent upgrades within compatibility policy |
+| D. Future optional hybrid | Customer-hosted data and execution; remote UI/optional management | Potentially hosted | Not an initial-release requirement |
+
+The built-in agent runtime is optional in headless mode if external agents can use the evidence APIs. The minimum services needed to support each feature are to be documented, not guessed.
+
+### 4.2 API families — CONFIRMED conceptual boundary; versions/transport DEFERRED
+
+- Telemetry API: standards-compatible ingestion and authorized raw query/retrieval for metrics, logs, traces.
+
+- Intelligence API: semantic evidence queries, context access, investigation execution/status/history, evaluations and evidence references.
+
+- Management API: tenants, permissions, service accounts, data sources, collection/retention policies, agent configurations, alert rules, service definitions, budgets and audit.
+
+Invariants:
+
+- All default UI functionality MUST be realizable through documented APIs.
+
+- Public APIs MUST enforce authorization at the actual resource and data scope.
+
+- APIs MUST be versioned with compatibility/deprecation rules before stable release.
+
+- No default UI-only privileged or undocumented path is permitted.
+
+- Custom UIs SHOULD not need direct access to database ports.
+
+- Streaming, pagination, cancellation, async job state and rate-limit semantics are required where relevant; exact wire transport is DEFERRED.
+
+- Raw telemetry and semantic evidence APIs must not leak service names, resource existence, or query metadata across unauthorized tenants.
+
+### 4.3 IaC and operations — CONFIRMED
+
+Two distinct forms of declarative support:
+
+1. Deploy platform infrastructure: Kubernetes manifests/Helm, Terraform/OpenTofu, local install and repeatable upgrades; exact maintained packaging matrix is DEFERRED.
+
+1. Manage platform resources as code: users, roles/policies, agents, data sources, alerts, service context, collection/retention and query budgets through versioned management APIs and declarative providers.
+
+A third investigative capability, read-only interpretation of customer IaC/deployments, is part of the operational context goal. Actual privileged remediation is not presumed and must use explicit task-based authorization and approvals.
+
+## 5. Traditional observability performance — SEPARATE WORKSTREAM
+
+Confirmed principle: storage/backends are not selected because of agent architecture alone. The telemetry foundation must stand on its own.
+
+### 5.1 Reference architectures (not mandatory choices)
+
+- VictoriaMetrics: specialized time-series indexing and ingestion; vminsert, vmstorage, vmselect in cluster deployments.
+
+- OpenObserve: mixed telemetry ingestion, WAL, Parquet/object-store oriented analytics and distributed query.
+
+- Grafana ecosystem: Mimir (metrics), Loki (logs), Tempo (traces), Grafana presentation/application server; independently deployed data engines.
+
+- Other useful references: ClickHouse/ClickStack, Jaeger, Prometheus, OpenTelemetry Collector.
+
+No decision is made yet that VictoriaMetrics is universally faster than OpenObserve, or OpenObserve is universally best for logs/traces. Architecture and benchmark results are workload-dependent. Compare actual sustained throughput under simultaneous ingestion and query, not only vendor-reported isolated query latency.
+
+### 5.2 Benchmark requirements — CONFIRMED direction
+
+Separate metrics, logs and traces tests before mixed-workload tests. Measure at least:
+
+| Signal | Ingestion | Query/read | Efficiency/reliability |
+| --- | --- | --- | --- |
+| Metrics | samples/sec, active series, series creation/churn | latency by query type, concurrent query load | CPU/sample, memory, durability, lag, cardinality impact |
+| Logs | records/sec, bytes/sec, indexing cost | text search, structured filtering, grouping/patterns | storage footprint, compression, compaction, tail latency |
+| Traces | spans/sec, trace completeness | ID lookup, attribute search, critical path | storage, sampling effects, latency, ingest impact |
+| All | simultaneous ingestion + representative queries | P50/P95/P99 | recovery, resource isolation, cost, tenant isolation |
+
+Benchmark acceptance target: Comparable to established engines on explicitly chosen representative scenarios. Quantitative SLOs, hardware, datasets, cost ceiling, test methodology and selected baselines are DEFERRED until benchmark planning. This is NOT a requirement to dominate every benchmark.
+
+### 5.3 Known trade-offs — CONFIRMED as acceptable
+
+- Indexing work versus flexible arbitrary search: accepted; benchmark after implementation.
+
+- Sampling, aggregation, finite retention versus perfect completeness: accepted; expose the resulting uncertainty.
+
+- Agent flexibility versus security: not a trade-off permitting weakened authorization; enforce the shared policy model.
+
+- Additional agent query demand versus ingest stability: must be mitigated by budgets, priorities and resource isolation.
+
+## 6. Canonical data and evidence contract
+
+**Status: CONFIRMED responsibilities and principles in v0.3 following the owner's explicit agreement with the Evidence Contract.** The approved responsibilities are Identity and Correlation, Evidence Query, and Evidence Result. The six approved principles are common identity, precise time semantics, evidence provenance, data completeness, consistent authorization, and backend independence. Detailed field definitions, JSON structures, exact operations, enum names and wire schemas below remain PROPOSED or DEFERRED and are not API-stable.
+
+### 6.1 Why it exists
+
+- Different backends use PromQL/MetricsQL, SQL/log search and trace search APIs; they should not dictate agent reasoning contracts.
+
+- Agents need bounded, relevant, provenance-rich evidence, not unbounded raw telemetry.
+
+- Custom agents should call the same stable operations as the built-in agent.
+
+- A finding must distinguish no match from unavailable, expired, sampled, truncated, or not authorized.
+
+- The contract must preserve sufficient information to reproduce or audit queries.
+
+### 6.2 Separate three contracts — CONFIRMED responsibilities with draft representations
+
+1. Signal/Identity Normalization Contract: identity/time/correlation mapping from native OTLP/Prometheus/backends into the platform's canonical context.
+
+1. Evidence Query Contract: authorized query requests, budgets, filters, consistency and execution metadata.
+
+1. Evidence Result Contract: results, references, source provenance, completeness, query costs and structured machine-readable errors.
+
+Do not force all logs, metric samples and spans into one identical physical record. The canonical format is an envelope around typed signal payloads and evidence references, not a replacement for OTLP or backend-native storage.
+
+## 7. Identity time and correlation contracts
+
+**CONFIRMED principles; PROPOSED detailed representations.** Identity, timing, correlation and provenance responsibilities are approved. The field names, mandatory/optional constraints, alias rules and serialization details below remain draft. The metric-cardinality direction is confirmed by A5.
+
+### 7.1 Canonical identity
+
+Required concepts (proposed): tenant_ref (authorization boundary), service_ref (durable logical identifier), environment_ref, source_ref, and optional deployment_ref, cluster_ref, incident_ref, agent_run_ref, trace_id, span_id.
+
+Map OTel resource attributes such as service.name, service.namespace, and deployment.environment.name into these identities without discarding their original names. Do not assume service.name alone is globally unique, or that the OTel service.instance.id is a durable logical service ID. Maintain aliases and a reconciliation policy for renamed or duplicate services.
+
+Metric cardinality direction (CONFIRMED by A5; exact label rules/limits DEFERRED): Do not insert unique trace, user, request, incident or agent-run IDs as normal metrics labels. Correlate by bounded service/environment labels, trace/log metadata, exemplars where supported, and evidence references.
+
+Trace context: Preserve W3C trace context across service/agent/tool boundaries where instrumented. OTel trace IDs are 16-byte identifiers, span IDs 8-byte; keep exact canonical lowercase hex for cross-backend referencing. Do not infer common ancestry solely from similar timestamps.
+
+### 7.2 Time semantics
+
+Canonical time ranges are in UTC, with explicit units and well-defined inclusivity (recommended [start, end)), but exact wire serialization is DEFERRED pending API implementation.
+
+Distinguish:
+
+- event_time: source event occurrence time; for traces the relevant span start/end or events.
+
+- observed_time: when a collector first observed the record if available.
+
+- ingested_time: when the backend accepted/persisted it if available.
+
+- retrieved_at: when the Evidence Gateway performed the retrieval.
+
+- effective_time_range: the time interval actually covered by returned data, which may differ from the request.
+
+Preserve metric resolution, aggregation window, rollup/downsampling and counter semantics. Do not infer causality from coincident peaks alone; clock skew and delayed ingestion must be representable.
+
+### 7.3 Correlation
+
+Correlation must support, where available:
+
+- trace_id/span_id for trace-to-log and distributed-trace linkage;
+
+- bounded logical service/environment/cluster identities for metrics-to-service joins;
+
+- exemplars, if supported, for metric-point-to-trace links;
+
+- deployment revision, release, Git commit, IaC change and incident IDs for operational context;
+
+- agent run/session IDs for linking tool execution to evidence and evaluations.
+
+All correlations should report how the link was established (exact_trace_id, exemplar, service_time_window, deployment_mapping, inferred) and whether it is authoritative or heuristic. Never silently imply an exact join where only a temporal or name-based association exists.
+
+## 8. Evidence Query and Result Contract
+
+**CONFIRMED responsibilities; PROPOSED detailed API design.** Authorized bounded retrieval, provenance, completeness and backend independence are approved. Tool groupings/names, field lists, result enums, numeric limits and example JSON below remain proposals or deferred choices.
+
+### 8.1 Query API model
+
+Two levels, both with identical backend authorization semantics:
+
+Raw access tools: query_metrics, search_logs, get_trace, search_traces, get_service_context, get_deployments (actual names DEFERRED). Provide expert access with validated filters/parameters and backend-specific escape hatches, subject to policy and cost limits.
+
+Semantic tools: service_health, compare_before_after_change, find_new_error_patterns, find_representative_failed_traces, investigate_dependency, retrieve_incident_evidence (actual names DEFERRED). These may call multiple raw tools and must return underlying source references and aggregation logic.
+
+Execution limits: Each query request must support a server-enforced tenant scope, time range, bounded result size, timeout/deadline and (as needed) rate/concurrency budgets. Concrete numeric defaults and quota algorithms are DEFERRED. LLM-supplied filters are not authority; the server derives tenant and resource scope from verified identity and policy.
+
+### 8.2 Proposed minimum Evidence Envelope fields
+
+| Group | Candidate fields | Why |
+| --- | --- | --- |
+| Envelope | schema_version, evidence_id, kind, created_at | Evolution and durable addressing |
+| Authority | tenant_ref, subject_ref, policy_version or opaque decision reference | Audit without disclosing privileged internals |
+| Entity | service_ref, environment_ref, deployment_ref, trace_id (optional) | Cross-system correlation |
+| Time | requested and effective ranges, retrieved_at | Distinguish stale/partial data |
+| Query | operation, sanitized parameters, fingerprint, backend adapter ID | Reproducibility and troubleshooting |
+| Payload | typed metric/log/trace/context result or summary | Avoid one-size-fits-all raw schema |
+| Provenance | source system, reference/locator, query or transform lineage | Verify claims against source |
+| Completeness | coverage, status, limitations, sampling/retention/truncation metadata | Calibrate conclusions |
+| Diagnostics | execution duration, limits, warnings, continuation cursor where relevant | Efficient investigation and safe pagination |
+
+Sensitive fields: authorization scopes and backend credentials must never be returned as secrets. Query fingerprints/logging must redact credentials and confidential input. Source references must be tenant-scoped and reauthorized when dereferenced.
+
+### 8.3 Completeness semantics
+
+Proposed top-level result outcomes (exact enum DEFERRED):
+
+- OK: query completed; result may contain matching data.
+
+- NO_MATCH: query completed successfully and no matching records were found within verified coverage; not proof that the real-world event never happened.
+
+- PARTIAL: some records/sources/time ranges missing, sampling/truncation/timeout or aggregation may materially limit inference.
+
+- UNAVAILABLE: source or required query unavailable.
+
+- DENIED: caller not authorized; response must not reveal unauthorized resource existence.
+
+- ERROR: failure not safely categorizable as a successful negative result.
+
+Coverage reasons may include sampled, retention_expired, not_collected, late_arrival, truncated, backend_timeout, adapter_limitation, source_unavailable, unknown, as available. The system must not invent a sampling rate or a completeness guarantee it cannot verify.
+
+Required reasoning behavior: A consumer must be able to tell the difference between "no matching records in available, retained and accessible data" and "there was no failure." Unknown completeness stays unknown. An evidence result can be syntactically valid yet inappropriate to support a causal conclusion.
+
+### 8.4 Example envelope — ILLUSTRATIVE ONLY, NOT AN API SPECIFICATION
+
+```
+{
+  "schema_version": "draft-0.1",
+  "evidence_id": "ev_01EXAMPLE",
+  "kind": "metric_comparison",
+  "subject": {
+    "tenant_ref": "tenant-example",
+    "service_ref": "checkout-api",
+    "environment_ref": "production"
+  },
+  "time": {
+    "requested_start": "2026-11-22T10:00:00Z",
+    "requested_end": "2026-11-22T10:20:00Z",
+    "retrieved_at": "2026-11-22T10:21:00Z"
+  },
+  "query": {
+    "operation": "compare_before_after_change",
+    "backend_refs": ["metrics-primary"],
+    "fingerprint": "opaque-normalized-query-hash"
+  },
+  "result": {
+    "summary": "p95 latency increased after the deployment",
+    "measurements": [
+      {"name": "p95_latency", "before_ms": 180, "after_ms": 510}
+    ]
+  },
+  "provenance": [{
+    "source_ref": "src_metric_query_01",
+    "reference": "tenant-scoped-opaque-evidence-handle",
+    "correlation_method": "service_time_window"
+  }],
+  "completeness": {
+    "outcome": "PARTIAL",
+    "limitations": ["trace_sampling_unknown"],
+    "coverage_known": false
+  }
+}
+```
+
+All values are fictional. The numbers, IDs, field names and structure are a design exploration. Do not copy this directly into a stable public API without explicit review.
+
+### 8.5 Evidence references and reproduction
+
+Each source reference should identify an authorized method to retrieve or verify the evidence, without embedding raw sensitive data by default. Evidence may be immutable snapshots or reproducible queries; these have different guarantees:
+
+- Snapshot: retained excerpt or aggregate tied to a content hash/version and collection time. Better reproducibility, additional storage/custody.
+
+- Query reference: sanitized query and time window executed against a backend. Lower duplication, but results may change due to late data, retention, reindexing, and rollups.
+
+Proposal: support both concepts and record which type was used; decide exact persistence policy, hashing, TTL and reference URI scheme when implementing evidence storage.
+
+No agent output should claim "verified" solely because the source was queried; verification requires checking the claim-to-evidence relationship.
+
+## 9. Authorization, security and privacy invariants
+
+### 9.1 One identity/authorization model — CONFIRMED
+
+- Subject types: human users, service accounts, standalone agents, delegated agents. Agent executions have their own auditable subject identity.
+
+- Permission concepts: subject, action, resource, tenant, environment and optional task conditions. Exact policy DSL/model DEFERRED.
+
+- Delegated agent rights must be bounded by user rights ∩ agent rights ∩ task scope; autonomous agents use their own service identity and task scopes.
+
+- Policy definitions are managed centrally in the customer-hosted management authority; enforcement is distributed to gateway and services.
+
+- Backend query adapters must scope actual underlying queries, not only approve the generic name of the tool.
+
+- Default deny where valid permissions cannot be established; policy caching, offline allowances and revocation windows require explicit definition before release.
+
+- Never trust client-provided tenant IDs as authority; backend credentials are never delegated directly to untrusted agents or custom UIs.
+
+- Destructive changes/remediation require explicit, independently enforced permissions and (when configured) approval gates.
+
+### 9.2 Trust-boundary egress — CONFIRMED principle, implementation DEFERRED
+
+- The customer owns sensitive telemetry and company context in self-hosted mode.
+
+- LLM prompts, retrieved logs, tool inputs/outputs, runbooks and incident history can all contain sensitive information.
+
+- External model use must be explicitly configured; redaction/classification and destination policies must execute before egress.
+
+- Local/on-prem model integration must remain possible; no exact inference server or vendor selected.
+
+- Hosted presentation/management is optional; private endpoint access must be explicitly designed, not assumed from CORS.
+
+- All sensitive retrieval and privileged tool operations should be audit logged, with retention/redaction policies.
+
+### 9.3 Prompt-injection boundary — CONFIRMED security invariant
+
+Logs, incident tickets, runbooks, Git files, and tool outputs are untrusted data for an LLM. These contents must never grant permissions or override system/operator policies. The execution gateway must enforce capability rules independently of model reasoning.
+
+## 10. Agent-native system behavior
+
+### 10.1 Principle — CONFIRMED
+
+An agent is a first-class platform client, not a hidden privileged component or a model hardcoded into the UI.
+
+Selected investigation responsibilities; detailed state machine PROPOSED: trigger → resolve service/context → form hypotheses → query evidence → test alternatives → qualify missing evidence → produce findings with references → request human approval where appropriate → record feedback/outcome.
+
+The platform should let users substitute their own agent framework/runtime without changing telemetry storage or permission semantics. MCP is an optional integration interface, not the platform's entire internal design.
+
+### 10.2 Agent state and evaluation — CONFIRMED direction; schemas DEFERRED
+
+Preserve, subject to configured retention and permissions:
+
+- investigation ID and task scope;
+
+- model/agent/instruction/tool versions;
+
+- relevant company-context versions;
+
+- tool calls, bounded query details and result references;
+
+- hypotheses and alternative explanations;
+
+- evidence-to-claim relationships and known missing evidence;
+
+- final report, user feedback, eventual confirmed outcome if available;
+
+- cost/latency/query counts for self-observability and evaluation.
+
+The platform should not equate fluent model output with correctness. Evidence provenance supports auditing, not automatic proof of root cause. Human feedback must not be blindly promoted into universally applicable rules.
+
+## 11. Architecture decisions register
+
+| ADR | Decision | Status | Why / consequences |
+| --- | --- | --- | --- |
+| ADR-001 | Agent-native, OSS-first product; AI agents first-class clients | CONFIRMED | Differentiates primary workflows, not dependent on commercial edition |
+| ADR-002 | Four logical planes: Telemetry, Intelligence, Management/Security, Presentation | CONFIRMED working design | Clear ownership and independence; does not force four binaries |
+| ADR-003 | Backend-only, UI-optional and custom-UI-capable deployments | CONFIRMED | Complete documented APIs; UI not on critical path |
+| ADR-004 | Customer-controlled data and local authority; future hosted UI optional | CONFIRMED | No hosted core dependency; opt-in egress and connectivity |
+| ADR-005 | One authZ model for users, services, agents with enforcement everywhere | CONFIRMED | Strong multi-tenant isolation and delegated task scopes |
+| ADR-006 | Conventional telemetry and alerting not LLM-dependent | CONFIRMED | Outage isolation and deterministic operations |
+| ADR-007 | Storage optimized per metrics/logs/traces workload, no engine preselected | CONFIRMED | Backend choice by benchmark, not platform narrative |
+| ADR-008 | Comparable performance target; acceptable indexing/retention trade-offs | CONFIRMED | Workload-based validation and visible partial data |
+| ADR-009 | Terraform/OpenTofu and modern deployment/IaC workflows remain | CONFIRMED | Two kinds of IaC: platform deploy + configuration |
+| ADR-010 | Canonical identity/time/correlation and Evidence Envelope | CONFIRMED responsibilities and six principles in v0.3 | Sections 6–8; exact schema/interface still requires review |
+| ADR-011 | Semantic Evidence Gateway independent from agent worker | CONFIRMED independence; detailed interface PROPOSED | Enables BYO agents, bounded source queries; consistent with A6 |
+| ADR-012 | Raw + semantic evidence APIs, references, completeness and deterministic bounded execution | CONFIRMED architectural responsibility in v0.4/v0.5 | Exact tool names, wire schemas and numeric limits remain DEFERRED |
+| ADR-013 | Exact storage engines and frameworks | DEFERRED; language portion superseded by ADR-LANG-01 | Storage build/integrate choice remains open; Rust-first preference requires prototype |
+| ADR-014 | Exact authZ engine (OPA/OpenFGA/custom) and policy syntax | DEFERRED | Shared model/invariants already decided |
+| ADR-015 | Exact OSS license | DEFERRED | Remain fully OSS; review dependencies |
+| ADR-016 | Exact hybrid hosting/security connectivity | DEFERRED | Future capability, not v1 requirement |
+| ADR-A1 | Unified traditional and AI-agent telemetry with canonical correlation | CONFIRMED in v0.3 | REQ-019; Section 17 |
+| ADR-A2 | First-class agent observations, runs and sessions over canonical telemetry | CONFIRMED in v0.3 | REQ-020; Section 17 |
+| ADR-A3 | First-class evaluation, feedback, datasets and experiment records | CONFIRMED in v0.3 | REQ-021; Section 17 |
+| ADR-A4 | Independent asynchronous evaluation service and workers | CONFIRMED in v0.3 | REQ-022; Section 17 |
+| ADR-A5 | Separate operational metrics from evaluation-derived quality metrics | CONFIRMED in v0.3 | REQ-023; Section 17 |
+| ADR-A6 | Shared authorization and complete headless evaluation APIs | CONFIRMED in v0.3 | REQ-024; Section 17 |
+| ADR-A7 | Policy-controlled content capture, privacy and provenance | CONFIRMED in v0.3 | REQ-025; Section 17 |
+| ADR-A8 | Physical storage selection remains deferred | CONFIRMED in v0.3 | REQ-026; Section 17 |
+
+Additional reconciled decisions:
+
+| ADR | Decision | Status | Why / consequences |
+| --- | --- | --- | --- |
+| ADR-D1–D6 | Canonical execution identity/links, immutable finalized observations, separate evaluation/corrections and derived analytics | CONFIRMED | Section 19 contains each stable D ID |
+| ADR-I1–I6 | Standard entry points, independent paths, async projections, delivery/security and recoverability | CONFIRMED | Section 21; ING-01–ING-06 are aliases, not additional decisions |
+| ADR-EVID-01 | Independent raw/semantic evidence APIs; deterministic planner; evidence distinct from hypotheses/conclusions | CONFIRMED responsibilities | Sections 8 and 22; schema remains draft |
+| ADR-CTX-01 | Versioned operational context and service graph with source/freshness and desired/observed distinction | CONFIRMED responsibilities | Section 22; physical graph/vector technology deferred |
+| ADR-AGENT-01 | Replaceable investigation workers and independent evaluation workers; durable auditable state | CONFIRMED responsibilities | Sections 10, 17, 19, 22; worker framework deferred |
+| ADR-REC-01–06 | Durable replay, fair recovery, late-data semantics, adaptive concurrency, delivery states, end-to-end benchmarks | CONFIRMED responsibilities | Section 23; products, limits and SLO values deferred |
+| ADR-LANG-01 | Rust-first preferred owned backend, Python AI workers, optional TypeScript UI | PREFERRED; replaces earlier Go-first recommendation | Section 24; independent Go components retained; production prototype required |
+| ADR-BENCH-01 | Workload-specific performance/reliability suites and Rust/Go validation gate | CONFIRMED process | Sections 23–25; numerical acceptance charter must precede measurement |
+
+## 12. Deferred decisions — ask only when implementation reaches them
+
+The unresolved parts of the original topics below remain deferred. Conceptual D1–D6 and I1–I6 are now approved; language has a preferred direction. Detailed schemas, products and numeric defaults are not selected by those approvals. Section 18.2 adds the observation/evaluation topics introduced in v0.3; no engine, transport, schema, policy syntax or numeric setting is selected by approving the conceptual architecture.
+
+| Topic | Specifically unresolved | Trigger for asking owner |
+| --- | --- | --- |
+| Storage | Engine(s), retention, indexes, compression, object-store/local tiers | Building data plane / running comparative benchmarks |
+| Performance | Target workload profile, SLOs, comparable baselines and thresholds | Benchmark harness and release performance gate |
+| API transport | REST vs gRPC, GraphQL, streaming transport, exact public resource paths | API server and first external client |
+| Evidence schema | Field names, required/optional constraints, versioning, source handle format, data model | Before committing public API / persistence migrations |
+| Tenant/service identity | ID format, namespace semantics, alias resolution, environments and cluster scopes | Tenant creation and context resolver |
+| Time and consistency | Time precision, inclusive/exclusive bounds, cache invalidation and exact late-data windows; REC-03 principles are locked | Query gateway schema and test fixtures |
+| Evidence retention | Query vs snapshot, evidence TTL, hashes, exports, redaction | Persisted investigation records |
+| AuthZ engine | OPA vs OpenFGA vs others, policy language and propagation | Security plane implementation |
+| AuthZ operations | Cache freshness, revocation, emergencies, cross-region access, auditing detail | Production multi-tenant/security design |
+| Agent execution | Agent SDK/framework, model SDKs, worker queue, state/checkpoint store | Built-in worker implementation |
+| Egress | Model-provider redaction, LLM hosting, confidentiality classes, key management | External provider integration |
+| Deployment | Compose/Helm/operator/Terraform module matrix, packaging and upgrade policy | Deployment pipeline |
+| UI | Framework, default workflows, design system | Optional UI implementation |
+| OSS | License, source contribution process, code and dependency obligations | Public repo release |
+| Hybrid | Remote management model, proxy/tunnel, network/auth handshakes | Only if future hosted edition is pursued |
+
+Rule: Resolve reversible implementation details autonomously within the approved architecture and record assumptions. Escalate only genuinely consequential choices that block the current task or would change a locked requirement. The owner authorized confident, researched design progress in the source conversation; that authorization does not silently select the hard choices in Section 25.
+
+## 13. Implementation acceptance tests and anti-drift guardrails
+
+### 13.1 Cross-cutting acceptance tests — CONFIRMED expectations
+
+| ID | Test | Pass criterion |
+| --- | --- | --- |
+| TEST-001 | Headless install | Backend ingest, query, alerts, management operations without default UI |
+| TEST-002 | Custom UI | Independent client can perform supported user-facing operations through published APIs |
+| TEST-003 | Own agent | External agent retrieves authorized context/evidence without built-in agent runtime |
+| TEST-004 | LLM outage | Metrics/logs/traces ingestion, query, routine alerting remain available |
+| TEST-005 | Policy equivalence | Human, service account and agent actions use same resource/action authorization semantics |
+| TEST-006 | Tenant isolation | Unauthorized principal cannot query, infer existence, or fetch references for other tenant data |
+| TEST-007 | Context/trace correlation | Correct links where IDs exist; heuristic links explicitly labeled |
+| TEST-008 | Sampling and retention | Missing data cannot be reported as complete coverage without proof |
+| TEST-009 | Model/tool audit | Investigation record preserves source evidence, versions and permitted actions |
+| TEST-010 | IaC | Deployment and management configuration doable declaratively, without UI |
+| TEST-011 | Vendor independence | At least one backend adapter can be substituted without modifying agent orchestration core |
+| TEST-012 | Performance | Run agreed representative metrics/logs/traces benchmarks before claiming parity |
+| TEST-013 | UI independent upgrades | Backend functions continue through UI restart, replacement and removal |
+| TEST-014 | Backend failure partiality | Intelligence API reports missing sources; never fabricates their data |
+| TEST-015 | Unified application and agent trace (A1) | Traditional service, agent, model and tool operations correlate using canonical source identity and relationships |
+| TEST-016 | Observation projection integrity (A2) | AI projection preserves trace/span identity, source provenance and explicit session/run mappings |
+| TEST-017 | Late and conflicting evaluations (A3) | Multiple evaluations/corrections retain attribution and history without rewriting execution evidence |
+| TEST-018 | Evaluation worker isolation (A4) | Disabled or failed evaluation workers leave production responses, ingestion, ordinary queries and deterministic alerts independent |
+| TEST-019 | Evaluator self-observability (A4) | Judge/tool errors, latency, cost and versions are inspectable separately from target quality judgments |
+| TEST-020 | Quality metric lineage (A5) | Aggregates resolve to canonical evaluations and evaluator/agent versions; individual records remain available under retention policy |
+| TEST-021 | Metric cardinality (A5) | Unique execution/user/request IDs do not become ordinary metric labels; exact allowlists/limits require separate decisions |
+| TEST-022 | Headless external-agent evaluation (A6) | Enabled evaluation APIs work without default UI, hosted control plane or built-in investigation agent |
+| TEST-023 | Evaluation authorization (A6) | Cross-tenant target/content/result access is denied under the shared policy model; workers do not bypass it |
+| TEST-024 | Content policy enforcement (A7) | Capture, content reads, evaluator use and external egress obey configured authorization/redaction/destination policy |
+| TEST-025 | Missing evidence and retention (A7) | Withheld, sampled, expired or unavailable content is surfaced as a limitation, not fabricated evidence or an automatic failing score |
+| TEST-026 | Storage independence (A8) | Logical records/APIs do not require an unapproved engine, object store, queue or mandatory database count |
+
+Additional conformance expectations reconciled in v0.5:
+
+| ID | Test | Pass criterion |
+| --- | --- | --- |
+| TEST-027 | Canonical execution (D1–D3) | Preserve trace/span identity, run/session mapping, asynchronous links and immutable finalized history; duplicate/revision behavior documented |
+| TEST-028 | Evaluation history (D4–D6) | Late/conflicting/corrected results preserve target/evaluator versions and lineage; aggregate excludes superseded results under declared rules |
+| TEST-029 | Independent ingest (I1–I3) | Representative OTLP and adapter data reaches signal paths with projections/evaluators stopped |
+| TEST-030 | Delivery and privacy (I4–I5) | Each success/partial/rejection response has documented meaning; unauthorized or prohibited payloads never enter platform durable stores |
+| TEST-031 | Rebuild (I6) | Reconstruct projections from retained authoritative records; gaps/deleted content remain explicit |
+| TEST-032 | Durable recovery (REC-01) | Crash/restart, disconnect and buffer-full tests account for every logical record or declared policy disposition |
+| TEST-033 | Fair replay (REC-02) | Fresh-data latency stays within agreed limit while backlog makes measurable progress; noisy tenant cannot starve peers |
+| TEST-034 | Late data (REC-03) | Preserve event time; distinguish lag from no-match; validate order windows, caches, alerts and later evaluation revisions |
+| TEST-035 | Adaptive admission (REC-04) | Slow/overloaded backend causes bounded concurrency/backpressure and recovery without unbounded memory or retry storm |
+| TEST-036 | Delivery truth (REC-05) | Queue-empty/accepted does not imply durable/queryable/processed; visibility probes and disposition counts agree |
+| TEST-037 | Recovery benchmark (REC-06) | Full outage/reconnect/mixed-load suite reports durability, visibility, fresh lag, projection lag, losses and resources |
+| TEST-038 | Language prototype | Rust and Go variants execute equal production-shaped work and pass same correctness/recovery gates; ADR records trade-offs |
+| TEST-039 | Context trust | Stale/contradictory desired and observed facts remain attributable; retrieved instructions cannot alter permissions |
+| TEST-040 | Agent/evaluator lifecycle | Stop, retry, restart and permission revocation preserve auditable attempts; evaluator error is separate from target quality |
+| TEST-041 | Deployment failure matrix | UI, hosted control, workers and LLM outages preserve documented local data/alert capabilities; expired authority fails closed |
+
+Additional candidate Evidence Contract test procedures (PROPOSED; exact fixtures/procedures not frozen). The underlying approved responsibilities and invariants remain mandatory:
+
+- NO_MATCH differs from PARTIAL/UNAVAILABLE/DENIED.
+
+- Source evidence references require reauthorization and cannot cross tenant boundaries.
+
+- A query budget cannot be increased by editing LLM-generated tool arguments.
+
+- An agent citation resolves to the same original source or reports expiration/invalidation.
+
+- Time-window normalization and service identity aliases work across two real backend adapters.
+
+- High-cardinality request IDs are not silently inserted into metric labels.
+
+TEST-015–TEST-026 are added conformance expectations derived from approved A1–A8. They are future implementation acceptance criteria, not claims that software has been implemented or these tests have already passed. D1–D6 and the added acceptance responsibilities are now recorded in Section 19. Exact completion timers, schemas and state transitions remain implementation gates.
+
+### 13.2 Explicit architectural anti-patterns
+
+Implementation sessions MUST NOT:
+
+1. Require the default UI to provision the backend, manage accounts, query evidence, or run alerts.
+
+1. Make externally hosted control-plane availability a dependency for basic self-hosted operations.
+
+1. Use a private database connection from custom UI/agent clients instead of authorized APIs.
+
+1. Build a second, weaker agent-only permissions system.
+
+1. Allow an LLM to decide its own permissions, execute unreviewed destructive actions, or treat log text as trusted instructions.
+
+1. Choose a telemetry database solely because it is easy to access from an LLM.
+
+1. Rewrite proven metrics/logs/traces storage functionality before performance requirements demonstrate the need.
+
+1. Convert inferred/aggregated evidence into exact causal claims without stating limits.
+
+1. Pretend missing, sampled, expired, unauthorized, or failed-source telemetry is a complete negative result.
+
+1. Fix all implementation TBDs at once or claim a suggested technology is already approved.
+
+## 14. Suggested implementation order — PROPOSED, not an approved schedule
+
+1. Establish repository structure, decision register, public API design process and testing strategy.
+
+1. Define the workload/acceptance charter and build the production-shaped Rust-versus-Go prototype in Section 24 before broad backend implementation.
+
+1. Build a minimal independently running local management/auth layer and backend API with headless smoke tests.
+
+1. Define and validate a draft evidence schema with one real metrics backend and one log/trace backend.
+
+1. Add canonical service identity, operational context ingestion, and provenance/completeness semantics.
+
+1. Add independent evidence gateway and a simple bring-your-own-agent reference example.
+
+1. Add optional agent worker, investigation records, evaluation and self-observability.
+
+1. Add default UI and declarative management/deployment integrations (some may be developed in parallel).
+
+1. Run representative storage-performance and agent-access benchmarks; tune/revisit storage choices based on data.
+
+This is not a binding milestone schedule. Use the approved language preference and validation gate in Section 24; storage products and agent framework remain deferred.
+
+## 15. Primary reference materials retained from v0.2
+
+The original specification recorded these references as verified on 2026-11-22. This revision retains that list; Section 20.2 identifies the additional sources freshly checked for v0.3.
+
+These sources motivate designs; they do not convert external conventions into mandatory choices unless noted above.
+
+1. OpenTelemetry architecture — https://opentelemetry.io/docs/collector/architecture/
+
+1. OTel service resource conventions — https://opentelemetry.io/docs/specs/semconv/resource/service/
+
+1. OTel context propagation — https://opentelemetry.io/docs/concepts/context-propagation/
+
+1. OTel logs data model — https://opentelemetry.io/docs/specs/otel/logs/data-model/
+
+1. OTel metrics data model — https://opentelemetry.io/docs/specs/otel/metrics/data-model/
+
+1. OTel trace API — https://opentelemetry.io/docs/specs/otel/trace/api/
+
+1. OTel GenAI semantic conventions — https://opentelemetry.io/docs/specs/semconv/gen-ai/ (note the separate evolving repository)
+
+1. Prometheus metric-label practices — https://prometheus.io/docs/practices/naming/
+
+1. Prometheus/OpenMetrics exemplar compatibility — https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
+
+1. VictoriaMetrics cluster architecture — https://docs.victoriametrics.com/victoriametrics/cluster-victoriametrics/
+
+1. OpenObserve architecture — https://openobserve.ai/docs/architecture/
+
+1. Grafana Tempo HTTP API / LLM-optimized responses — https://grafana.com/docs/tempo/latest/api_docs/
+
+1. Grafana Tempo AI integrations — https://grafana.com/docs/tempo/latest/introduction/tempo-and-ai/
+
+1. Open Policy Agent deployment / PDP-PEP separation — https://www.openpolicyagent.org/docs/deploy
+
+1. Open Policy Agent tool-call authorization — https://www.openpolicyagent.org/docs/agent-tool-calling
+
+1. OpenFGA authorization — https://openfga.dev/
+
+1. Braintrust BYOC separation — https://www.braintrust.dev/blog/security-data-control
+
+1. OTel sampling — https://opentelemetry.io/docs/concepts/sampling/
+
+1. OTel semantic convention stability — https://opentelemetry.io/docs/specs/otel/versioning-and-stability/
+
+## 16. Implementation handoff template
+
+Use this block at the start of any substantial implementation session:
+
+> Project: AI-Native Observability Platform
+> Architecture reference: AI_Native_Observability_Architecture_Spec_v0.5.md
+> Task: [fill with concrete task]
+> Relevant confirmed requirements: [REQ IDs]
+> Relevant ADRs: [ADR IDs; include relevant A, D, I, REC and language decisions]
+> Known proposed or deferred decisions involved: [topics]
+> Requested implementation boundaries: [components and public API]
+> Acceptance tests to satisfy: [TEST IDs]
+> Stop-and-ask conditions: Only when a DEFERRED choice blocks the task or a confirmed requirement would need changing.
+> Before coding: Summarize which confirmed contracts the implementation must preserve and distinguish approved choices from assumed defaults.
+> After coding: List tests passed, security/performance evidence, any remaining TBDs, and whether an ADR update is required.
+
+## 17. Unified traditional and AI agent observability
+
+### 17.1 Approval and scope
+
+**Status: CONFIRMED in v0.3.** The owner explicitly approved the unified observability findings and recommendations in the referenced conversation, then requested incorporation of decisions A1–A8. The records below express those approvals as implementation requirements. They extend the existing four-plane architecture; they do not introduce a fifth plane or replace earlier confirmed requirements.
+
+The architecture combines a unified telemetry foundation with specialized AI observation and evaluation models and independently deployable evaluation execution. This corresponds to the prior research's Option C for data architecture and Option D for deployment. Separate logical records and service responsibilities do not mandate separate physical databases.
+
+### A1 Unified telemetry foundation
+
+**CONFIRMED — REQ-019 / ADR-A1.** Traditional applications, infrastructure, customer-owned agents, and the platform's own agents MUST share a common telemetry and correlation foundation. OpenTelemetry/OTLP is the canonical tracing and telemetry interoperability foundation. GenAI semantic conventions and adapters for OpenInference or framework-specific instrumentation enrich that foundation without creating an incompatible trace system.
+
+Preserve original trace IDs, span IDs, parent relationships, span links, timestamps, resource identity, and source provenance. Agents, model generations, tool calls, retrievals, and handoffs must be correlatable with the ordinary application and infrastructure operations that caused or supported them. Parallel and asynchronous workflows must not be reduced to a fictitious strictly nested execution tree.
+
+Exact supported convention versions, normalization mappings, collector topology, and compatibility behavior remain DEFERRED. GenAI conventions are still marked Development in the official repository; implementation must select and document versions rather than treating the moving upstream branch as a frozen platform schema [R20].
+
+Unified identity and telemetry semantics do not require a single wire path or physical ingestion pipeline. Existing Prometheus-compatible and backend-specific interfaces remain compatible with the earlier architecture where selected; trace correlation and shared authorization must remain consistent across them.
+
+### A2 First class agent observations and sessions
+
+**CONFIRMED — REQ-020 / ADR-A2.** Agent observations and sessions are first-class logical concepts. An AI observation projection provides efficient AI-oriented retrieval over canonical execution telemetry; it MUST preserve links to the original execution records and MUST NOT become an unrelated trace tree with independently invented trace ancestry.
+
+The conceptual structure is session → trace or agent run → observation or span. A session may span multiple runs and traces; run identity and trace identity need an explicit mapping rather than an assumption that they always mean the same thing. Observations may describe agent invocation, model generation, tool use, retrieval, or handoff. Normalized attributes may include agent/model/prompt versions, provider, operation, usage, latency, cost, service/environment, and authorized content references when available.
+
+Only identity, provenance, timing, and correlation needs should determine the mandatory minimum. Missing optional fields must remain distinguishable from known values. The precise field set, identifier formats, projection update rules, and session completion policy are DEFERRED. Content capture is governed by A7.
+
+### A3 First class evaluation and improvement records
+
+**CONFIRMED — REQ-021 / ADR-A3.** Evaluation results, human feedback and annotations, evaluator/rubric versions, datasets, and experiments are first-class logical records with their own lifecycle. They reference execution evidence rather than overwriting it.
+
+Support evaluations targeting an observation/span, agent run/trace, session, or experiment result. Evaluation sources include deterministic code, LLM judges, human reviewers, and external systems. Multiple or conflicting judgments and later corrections must be representable with attribution and history. A thumbs-down event is feedback; it does not automatically establish a verified failure or root cause.
+
+The capability direction includes asynchronous production evaluation, on-demand historical evaluation, session/task evaluation, authorized annotation, dataset curation, offline experiments, and regression comparison. Exact release sequencing, score types/ranges, evaluator interfaces, correction semantics, and dataset/experiment schemas remain DEFERRED. Langfuse's current concepts provide a reference for linking scores and experiments; its product-specific schemas are not adopted requirements [R21].
+
+### A4 Independent asynchronous evaluation execution
+
+**CONFIRMED — REQ-022 / ADR-A4.** The Intelligence Plane contains an independently deployable Agent Evaluation Service and asynchronous workers, separate from the built-in Investigation Runtime. Evaluation workers can scale or be disabled without making production agent responses, telemetry ingestion, ordinary queries, or deterministic alerting depend on evaluation completion.
+
+External agents and external evaluation systems can use the supported APIs without running the default investigation agent. Evaluation may use code, local/customer-hosted models, explicitly permitted external models, or human workflows. Tenant permissions, budgets, and trust-boundary rules apply in all cases.
+
+Evaluators themselves must be observable: retain permitted execution status, errors, latency, usage/cost, evaluator/model/rubric versions, and links to evaluation targets and results. Evaluator execution telemetry and the quality judgment of the target are distinct logical records. An evaluator error is not a failing quality score for the target. Langfuse documents separate asynchronous worker execution and evaluator debugging traces as useful references [R22, R23].
+
+Sections 19, 21 and 23 now establish delivery/recovery responsibilities. Queue technology, exact acknowledgement boundary, retry/backoff values, idempotency key format, scheduler, quotas and code-evaluator isolation mechanism remain DEFERRED.
+
+### A5 Separate operational and quality metrics
+
+**CONFIRMED — REQ-023 / ADR-A5.** Operational metrics describe execution health and efficiency: latency, errors, tool reliability, token usage, resource consumption, and model cost. Quality/outcome metrics describe evaluated behavior: task success, diagnosis accuracy, groundedness, evaluation pass rates, human corrections, and regressions.
+
+Canonical evaluation records are the source for evaluation-derived quality aggregates. Aggregates may be exported to the ordinary metrics engine, but MUST NOT replace individual evaluation records, evaluator attribution, evidence references, or version history. An agent's self-reported success must remain identifiable as such and cannot silently become independent ground truth.
+
+Avoid unique run, session, trace, request, incident, and user IDs as ordinary metric labels. Use traces/logs, evidence references, and exemplars where supported for individual-execution correlation. Exact aggregate formulas, eligible populations, denominators, missing-score treatment, label allowlists, and cardinality limits are DEFERRED. Operational latency and task-quality scores must not be conflated even when a dashboard presents them together.
+
+### A6 Shared authorization and complete headless operation
+
+**CONFIRMED — REQ-024 / ADR-A6.** Observations, protected content, evaluation targets/results, annotations, datasets, experiments, and evaluation jobs MUST use the existing authorization model for users, service accounts, standalone agents, and delegated agents. There is no separate weaker evaluation permission system.
+
+Actual retrieval, target dereferencing, content access, job execution, and result publication must respect authorized tenant/resource/task scope. Agent delegation remains bounded by user rights ∩ agent rights ∩ task scope, with its own audit identity. Workers do not gain permission merely because they are internal services.
+
+All enabled evaluation capabilities must be operable through documented APIs without the default UI, a vendor-hosted control plane, or the built-in investigation agent. Telemetry-only installations can omit evaluation workers. Customer-hosted operation and local authorization remain complete. Exact authorization actions, sharing policies, worker credential lifetimes, and revocation behavior remain DEFERRED under the earlier security invariants.
+
+### A7 Content capture privacy and provenance
+
+**CONFIRMED — REQ-025 / ADR-A7.** Capturing prompts, outputs, tool arguments/results, retrieved documents, and other sensitive payloads is policy-controlled and optional. Basic operational observability must remain useful without full content capture. Do not require unavailable internal model reasoning; only deliberately emitted, permitted execution data can be observed.
+
+Capture, processing, storage, retrieval, evaluator use, export, and external model egress must follow customer configuration, authorization, redaction/classification, and retention policies. Large or sensitive payloads may be held in an optional protected payload store and referenced from observations. A separate physical store is not mandatory. Access to a trace does not automatically imply access to every protected payload.
+
+Preserve provenance and visibility limitations: source execution, transformations/redaction, permitted content references, relevant configuration/evaluator versions, and missing/sampled/expired/unavailable data must remain distinguishable. An evaluation that lacks required evidence must report that limitation rather than fabricate a judgment. Corrections must not rewrite the original execution history.
+
+Precise default capture mode, opt-in granularity, field classifications, payload limits, encryption/key management, redaction implementation, retention durations, deletion propagation, and reproducibility policies remain DEFERRED. Metadata-first capture with explicit content opt-in is a PROPOSED default, not a silently selected deployment policy.
+
+### A8 Physical storage selection remains deferred
+
+**CONFIRMED CONSTRAINT — REQ-026 / ADR-A8.** No physical storage engine, queue product, index layout, object store, or mandatory database count is selected by A1–A7. Canonical execution telemetry, observation projections, evaluation records, operational metrics, quality aggregates, and protected content are logical responsibilities and may share infrastructure or use specialized stores where justified.
+
+Select physical technologies only after representative traditional and AI workload evaluation. Include deep traces, large optional payloads, late evaluations, analytical score queries, ingestion/query contention, recovery, retention, privacy, and operational cost. Langfuse's separation of transactional, analytical, queue, and blob workloads illustrates one implementation, not a required stack [R22]. ADR-007 and ADR-013 remain in force.
+
+### 17.2 Approved ownership and dependency boundaries
+
+| Plane | Added responsibility | Boundary retained |
+| --- | --- | --- |
+| Telemetry Data | Unified operational/agent telemetry and correlated observation projections | No evaluator rubric or autonomous investigation business logic; routine alerts remain deterministic |
+| Intelligence | Observation/evidence APIs, evaluation APIs and records, datasets/experiments, independent evaluation workers | No mandatory built-in agent or UI; accesses telemetry through authorized interfaces |
+| Management and Security | Capture/egress policies, evaluator configuration, permissions, budgets and retention policy | Local customer authority and distributed enforcement remain required |
+| Presentation | Optional tracing, evaluation review, and experiment interfaces | No authoritative state, hidden privilege, or mandatory UI dependency |
+
+Primary logical flow: sources → unified ingestion/normalization → canonical telemetry and AI observation projection → authorized evidence and evaluation APIs → asynchronous evaluation → evaluation records → optional quality aggregates. The Investigation Runtime is a separate consumer of evidence. Every sensitive operation, including ingestion and worker access, remains subject to the shared authorization boundary.
+
+The arrows describe dependencies, not a mandatory synchronous call chain. Observation/evaluation lag, loss, and incomplete evidence must be visible; their precise consistency guarantees must be fixed before the relevant public API or production release; approved principles are in Sections 19, 21 and 23.
+
+## 18. Additional implementation guidance and open decisions
+
+### 18.1 Contract extensions remain at conceptual level
+
+**CONFIRMED responsibilities; PROPOSED representations.** Extend the three approved Evidence Contract responsibilities rather than replacing them. Identity/correlation associates observations, runs, sessions, evaluator executions and evaluation targets. Queries retrieve bounded authorized data. Results return typed records, source references, provenance and completeness information.
+
+Candidate observation groups are identity, operation, timing/status, model/tool metadata, usage/cost, content references, and lineage. Candidate evaluation groups are target reference/version, evaluator identity/version/type, result/type, supporting evidence, execution provenance, and correction history. These are conceptual groups, not required JSON keys or a frozen API. Optional unavailable model, usage, content, and cost fields must not be invented.
+
+Preserve distinct source execution, evaluation execution, evaluation result, and feedback records. A result may arrive long after the target finishes. Re-evaluation with another evaluator/version is not an edit to the execution trace. Score interpretation and the treatment of conflicting or superseded evaluations require explicit schema and aggregation decisions.
+
+### 18.2 Added deferred decisions
+
+These entries extend Section 12. Earlier deferred topics remain open only to the extent not explicitly advanced by the v0.4/v0.5 reconciliation in Sections 19–25.
+
+| Topic | Still unresolved | Ask when |
+| --- | --- | --- |
+| Instrumentation compatibility | Supported GenAI/OpenInference versions, mappings, extension namespaces and migration rules | Implementing ingestion normalization or SDK compatibility |
+| Observation projection | Required fields, identity mappings, lag indicators, rebuild/reconciliation and duplicate handling | Implementing projection persistence or serving APIs |
+| Execution and evaluation lifecycle | Completion/checkpoints, late data, target snapshots, job states, retries, idempotency, cancellation and replay | Before connecting ingestion/projections to asynchronous evaluation |
+| Evaluation models | Target schemas, score ranges, rubrics, corrections, feedback distinctions, dataset/experiment versioning and API resources | Implementing evaluation persistence and public APIs |
+| Worker isolation and scale | Queue/store technology, tenant fairness, budgets, code sandboxing, model routing and evaluator recursion protection | Implementing evaluation execution |
+| Content policy | Default capture mode, opt-in scope, redaction, payload placement, authorization, deletion and retention propagation | Before capturing or evaluating sensitive content |
+| Quality analytics | Selection bias, population/denominator, unevaluated/failed/skipped cases, version comparisons and label limits | Implementing aggregate quality metrics and alerts |
+| Feature delivery | Minimum initial evaluation feature set and sequencing of online, session, dataset and experiment workflows | Planning the first implementation release |
+
+Metadata-first capture remains a proposed default. Durable retry-safe handoff and logical result identity are preferred lifecycle mechanisms in Section 19, subject to implementation validation; no global exactly-once claim is permitted. A protected object store, outbox, exact job guarantee, queue product and worker framework are still unselected. Conceptual approval does not select any of those technologies.
+
+## 19. Canonical execution and evaluation lifecycle
+
+### 19.1 Approved D1–D6
+
+**CONFIRMED conceptual principles.** The owner approved D1–D6 after the v0.3 handoff; the v0.4 blueprint incorporated them. These decisions replace v0.3's description of the whole data-model decision as merely next/proposed. They do not freeze a full session/job state machine.
+
+| ID | Locked decision | Implementation boundary |
+| --- | --- | --- |
+| D1 | Preserve OTel trace_id/span_id; add explicit run and session identities | A run is not assumed to equal one trace; preserve source identity and normalized mapping |
+| D2 | Preserve parent-child relationships and cross-run/span links | Parallel agents, retries and asynchronous handoffs cannot be flattened into invented ancestry |
+| D3 | Finalized execution observations are immutable authoritative records | Derived indexes can be rebuilt; corrections/new evidence use attributed revisions or additional records, not silent history edits |
+| D4 | Evaluations and human feedback have separate records referencing targets | Evaluation may target span, run, session or experiment output; it may arrive later |
+| D5 | Corrections/supersession preserve judgment history | Keep evaluator/rubric/model version, attribution, target version, reason and prior result relationships |
+| D6 | Quality analytics derive from canonical evaluation records | Dashboards/aggregates are rebuildable and do not become the authority for individual outcomes |
+
+Finalized immutability is a logical history guarantee; it does not prevent required redaction, deletion or retention expiry. Such removal must propagate to derived representations and references under the chosen policy. Never regenerate deliberately removed content during replay.
+
+### 19.2 Lifecycle responsibilities and proposed mechanisms
+
+Sessions group multiple runs/traces; runs represent execution attempts; observations describe agent, generation, tool, retrieval or handoff steps. Dataset versions identify reproducible inputs and experiment records identify configurations and outcomes. Exact resource schemas and enum spellings remain DEFERRED.
+
+Distinguish source execution, evaluator execution, quality judgment and human feedback. Self-reported success is an attributed claim. Missing evidence, evaluator failure, budget exhaustion, skipped work and target failure must remain distinguishable.
+
+**Preferred mechanism, pending implementation validation:** durable asynchronous handoff, at-least-once work delivery with idempotent logical publication, versioned evaluation targets and explicit completion/checkpoint signals. Timeouts may produce provisional targets, never silently final complete ones. Late evidence may produce a new target/result revision; evaluator changes produce new judgments. Publication idempotency does not guarantee a remote judge is invoked or billed only once after ambiguous failure.
+
+Implement a recoverable handoff/reconciliation path so persisting a target and scheduling work cannot silently lose the evaluation trigger. An outbox, log or scanner are possible mechanisms, not selected products. Completion and worker execution must not block source production responses or core ingest. Queued jobs must recheck current authority and evidence availability before sensitive execution/publication.
+
+### 19.3 Still-required implementation decisions
+
+Before public API freeze, define event/target/job/attempt/result identity and deduplication scope; finalization/checkpoint semantics; open-session fallback; snapshot versus query references; late-data revision policy; durable acknowledgement boundary; retry/cancellation/replay rules; expiry and permission-revocation behavior; aggregate denominators and supersession handling. Choose exact states and timers through failure/recovery examples, including a missing completion signal and crash between target persistence and job enqueue.
+
+Required validation: duplicate submissions and worker crashes do not create unexplained logical double counting; all attempts remain auditable; target revisions do not overwrite finalized execution history; expired or denied evidence yields an explicit limitation; cancelled work cannot publish unauthorized results. These are acceptance responsibilities, not claims of end-to-end exactly-once execution. OpenTelemetry resilience, Langfuse's async architecture and session guidance provide reference rationale [R22, R24, R25].
+
+## 20. Version history and preservation record
+
+### 20.1 Changes from v0.2 to v0.3
+
+- Preserved the complete v0.2 specification supplied as DOCX, including REQ-001–REQ-018, ADR-001–ADR-016, TEST-001–TEST-014, earlier architecture boundaries, benchmark requirements, proposed designs, illustrative JSON and the entire deferred-decisions register. Markdown is the maintained deliverable for this revision.
+- Recorded the owner's subsequent Evidence Contract approval at the conceptual level. REQ-018 and ADR-010 now confirm the three contract responsibilities and six principles: common identity, precise time semantics, provenance, completeness, consistent authorization, and backend independence. Exact schema, enum, field constraints, transport and API names remain proposed/deferred.
+- Confirmed the Evidence Gateway's independence from the built-in agent in ADR-011. ADR-012 distinguishes approved bounded retrieval/result principles from proposed raw/semantic tool design.
+- Promoted the metric-cardinality direction in REQ-017 under A5; exact label policies and limits remain deferred.
+- Added A1–A8 as ADR-A1–ADR-A8, REQ-019–REQ-026, and TEST-015–TEST-026, with detailed boundaries in Sections 17–18. These extend, rather than replace, earlier requirements and tests.
+- Added the next lifecycle-contract recommendation in Section 19, explicitly PROPOSED; no storage product, worker framework, retention duration, capture default, numeric threshold, or final public schema was selected.
+- Updated version references and the implementation handoff. All other earlier PROPOSED and DEFERRED choices retain their status. Earlier proposed implementation order is retained as guidance and must be reconciled with approved A1–A8 when planning actual work.
+
+### 20.2 Additional primary references verified 2026-11-22
+
+- **R20 — OpenTelemetry GenAI semantic conventions.** The official repository lists inference, tool execution, retrieval, agent, events and metrics conventions and marks the specification Development. [Official GenAI conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/README.md).
+- **R21 — Langfuse evaluation core concepts.** Scores attach to execution-related targets, multiple evaluator methods are supported, and production evaluation connects with datasets and experiments. [Evaluation core concepts](https://langfuse.com/docs/evaluation/core-concepts).
+- **R22 — Langfuse architecture.** Separate web/API and worker containers, asynchronous processing, analytical/transactional/blob storage roles, and queued event references illustrate separation of responsibilities. [Platform architecture](https://langfuse.com/handbook/product-engineering/architecture).
+- **R23 — Langfuse LLM as a judge.** Evaluator execution traces, statuses and retry behavior illustrate why the evaluator requires its own operational telemetry. [LLM as a judge](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge).
+- **R24 — OpenTelemetry Collector resiliency.** Sending queues, persistent WAL-backed queues and message queues provide different recovery behavior and retain explicit loss limits. [Collector resiliency](https://opentelemetry.io/docs/collector/resiliency/).
+- **R25 — Langfuse session evaluation.** Sessions do not inherently provide an ending signal; explicit final-trace tagging is one documented approach. [Evaluating sessions and conversations](https://langfuse.com/resources/engineering/evaluating-sessions-conversations).
+
+These references support the architecture rationale. They do not import vendors' deployment dependencies, license terms, performance claims, or schemas as platform requirements. Section 15 retains the original v0.2 reference list; the sources newly checked for this revision are listed here.
+
+### 20.3 Reconciliation from v0.3 and v0.4 to v0.5
+
+The v0.3 maintained Markdown supplies Sections 0–20, REQ-001–REQ-026, ADR-001–ADR-016, ADR-A1–ADR-A8 and TEST-001–TEST-026. The original v0.2 DOCX supplies the earlier lineage. This revision retains all top-level section numbers and prior IDs; historical change records remain historical. New records extend existing responsibilities rather than creating a competing architecture.
+
+| Decision evidence | Approval / status transition | Current location |
+| --- | --- | --- |
+| Owner: “I agree with the contract” | Evidence responsibilities and principles confirmed; wire schema remains draft | 6–8 |
+| Owner: “I agree with your findings and suggestions” | A1–A8 confirmed | 17 |
+| Owner: “OK, agree” following D1–D6 | Canonical model principles confirmed; full lifecycle details remain open | 19 |
+| Owner: “I agree…design all the things” after I1–I6 proposal | Authorized researched design progress; v0.4 selected I1–I6 and evidence/context responsibilities | 21–22 |
+| Owner's outage report followed by “Cool, I agree” | Rust-first supersedes earlier Go-first preference; replay/recovery becomes a first-class acceptance dimension | 23–24 |
+| Current reconciliation request | Preserve those approvals, include REC-01–REC-06 and require production-shaped Rust/Go validation | 2, 11, 13, 23–25 |
+
+The source conversation is [OpenObserve Community Growth Research](chatgpt-conversation://6b01d703-83dc-83ea-a1a5-3e46e8bb8996). Relevant turn IDs are ff5eb141-4049-4d2a-9d3d-983bfaf23650 (Evidence Contract approval), 3a5ab859-01c3-43cc-83d6-c1a3ad4f6de2 (A approval/D proposal), 3f9bcbaa-8aa3-40f4-9e95-526a8f0afbea (D approval and one-conversation preference), b245bbc1-41e4-4c06-b107-5cf6e0c929aa (I proposal), eddf5f21-ea91-404e-a239-ffddf1785a06 (design authority/v0.4), 4187971f-123c-4698-87d6-a76757020d83 (outage/language analysis), and 08a6944d-221c-4126-aca0-a247ca0893b4 (latest agreement/update request). Conversation approval establishes project authority; external references establish rationale, not approval.
+
+### 20.4 Precedence and preservation rules
+
+1. Current explicit locked decisions and status updates take precedence over earlier proposal wording. The historical v0.3 change log is not an active assertion that D1–D6 or I1–I6 remain unapproved.
+2. The earlier Go-first recommendation is SUPERSEDED. Rust-first is an approved preference, with a required production prototype before broad commitment. Go is not prohibited in reused infrastructure or ecosystem-specific tooling.
+3. “No language selected” in the old baseline is superseded only for the owned-backend preference; final frameworks and storage remain open.
+4. D1–D6 approve the canonical model. They do not approve every proposed completion timer, target snapshot policy or worker state transition.
+5. I1–I6 approve the ingest architecture. They do not pick a queue, WAL format, fsync/replication policy or fixed acknowledgement stage.
+6. REC-01–REC-06 approve recovery responsibilities and the required benchmark category. The owner's reported 24h/1h/16-thread experience is contextual evidence, not a universal release SLO.
+7. All prior approved headless, authorization, privacy, provenance, evidence and traditional-observability invariants survive. No omission from a diagram removes an invariant.
+
+## 21. Unified ingestion and processing — I1–I6
+
+**LOCKED conceptual architecture.** I1–I6 retain their original identifiers. The v0.4 blueprint's ING-01–ING-06 are aliases in the same order, not six additional requirements.
+
+| ID / alias | Approved responsibility | Acceptance boundary |
+| --- | --- | --- |
+| I1 / ING-01 | OTLP is the primary standard entry for logs, metrics, traces and compatible GenAI instrumentation; support additional formats through adapters | Versioned normalization preserves source identity; Prometheus-compatible ingest can retain a specialized path |
+| I2 / ING-02 | Metrics, logs and traces have independent logical processing pipelines | Separate buffering, scaling, indexing and retention strategies are permitted; one physical pipeline is not mandated |
+| I3 / ING-03 | Build AI observation projections asynchronously from canonical execution | Projection/evaluator outage does not block ordinary telemetry intake or source responses |
+| I4 / ING-04 | Publish explicit delivery guarantees and states; tolerate retries/duplicates | Document success, partial success, rejection, retryability and stage-specific lag; no global exactly-once claim |
+| I5 / ING-05 | Authenticate, resolve authorized tenant scope, validate and apply capture/redaction policy before platform durable persistence | Includes temporary spools, WALs, queues, diagnostic logs and optional payload stores; no bypass through a secondary adapter |
+| I6 / ING-06 | Rebuild derived observations/indexes/quality aggregates from retained authority | Rebuild cannot recover expired/redacted/never-collected data and cannot bypass current authorization |
+
+Flow: source/collector → authorized admission and privacy → signal-specific write path → configured durability/storage → query visibility. Canonical traces additionally feed asynchronous AI projections; authorized evaluation submissions/feedback have their own APIs and worker path. Evaluation does not sit in the telemetry critical path.
+
+Independent source collectors may buffer data before platform admission under the source owner's capture policy. I5 governs data entering platform-controlled durable storage; deployments must also configure source-side privacy when unredacted collector disks would violate customer policy.
+
+A durability contract must name the actual failure scope it survives (process, node, disk or replica failure), when acknowledgement occurs and when the source may release buffered data. A memory admission acknowledgement cannot silently be marketed as durable delivery. Different adapters may expose different guarantees if explicitly documented.
+
+OTLP has full-success, partial-success and failure semantics. In particular, a populated partial-success response is not a generic retry signal for the entire batch. Implement protocol-specific retry behavior; report rejected counts/reasons without echoing sensitive payloads [R26]. Collector persistence has finite capacity, retry and disk-failure limits [R24].
+
+Unselected: receiver/distribution choice, queue product, WAL design, partitions, replication/fsync boundary, batching, retry values, idempotency key format, normalization schema and SDK compatibility matrix. Each selected adapter must publish its actual capability and loss envelope before release.
+
+## 22. Semantic evidence, context, agents and evaluation
+
+### 22.1 Evidence API and deterministic execution
+
+**LOCKED responsibilities; exact endpoints and schemas DEFERRED.** Expose both authorized raw telemetry access and semantic evidence operations. The Evidence Service remains independently usable by customer agents without the built-in Investigation Runtime. REST/gRPC/SDK and optional MCP are transport choices; MCP is not the internal architecture.
+
+Candidate capabilities retained from the blueprint are service discovery/context/health, bounded metric queries, log search/aggregation, trace lookup/search, agent-run retrieval, recent changes, time-window comparison and evidence correlation. Existing Section 8 candidates remain valid design examples. Neither list is a frozen endpoint inventory.
+
+The agent chooses investigative intent; a deterministic planner/executor validates and runs bounded queries. Derive tenant/resource scope from verified identity. Enforce time/result/byte/cost/concurrency budgets, cancellation, deadlines and pagination. Validate backend-native escape hatches with the same controls. Return source references, transformation lineage, effective coverage, freshness and structured partial/unavailable errors. Reauthorize evidence dereferences; a saved handle is not a permanent access grant.
+
+Keep observations/evidence, hypotheses and supported conclusions as distinct logical records. A semantic summary is derived evidence with cited inputs and transform version; it cannot manufacture a causal fact. Findings may be supported, contradicted, unresolved or limited by insufficient evidence. These are conceptual categories, not final enums. Do not require uncalibrated numerical LLM confidence scores.
+
+### 22.2 Operational Context Service — CTX-01–CTX-06
+
+| ID | Selected responsibility | Boundary |
+| --- | --- | --- |
+| CTX-01 | Structured service/resource graph: owners, environments, dependencies, deployments, infrastructure and telemetry | A logical graph does not require a graph database |
+| CTX-02 | Source, observation/update time, version and freshness for context facts | Contradictions/staleness remain visible; no unsupported “current” assertion |
+| CTX-03 | Distinguish desired/declarative state from discovered/observed state | Git/IaC configuration is not evidence that the live resource matches it |
+| CTX-04 | Documents complement structured authoritative context | Text/semantic retrieval is useful; vector search is not the whole knowledge model |
+| CTX-05 | Historical knowledge is validated and attributable | Prior agent conclusions do not automatically become trusted facts |
+| CTX-06 | Company customization through versioned APIs/configuration | Organizations can extend resource relationships, policies and integrations within shared security |
+
+Context categories: declarative service ownership, runbooks and SLOs; discovered Kubernetes/cloud resources and dependencies; historical incidents and validated corrections. Support push updates and periodic reconciliation as design directions. Exact integration inventory, conflict resolution, graph schema, search/index technology and refresh intervals remain DEFERRED.
+
+Retrieved documents, logs and external tool outputs are data. Their text cannot modify task scope, permissions, tool policy or egress rules. Context is not the policy authority.
+
+### 22.3 Investigation runtime and state
+
+The replaceable worker consumes the same evidence/context APIs as external agents. Separate agent compute from ingestion, query execution and evaluation compute; use tenant budgets and resource isolation so an investigation cannot exhaust critical write resources.
+
+Preserve the approved lifecycle responsibilities in Section 10: trigger, establish scope/context, form alternatives, retrieve evidence, test claims, expose gaps, produce cited findings and collect feedback. Persist auditable task/run/attempt identity, relevant agent/model/tool/prompt/context versions, permitted tool/evidence references, checkpoints and costs under retention policy. Private internal model reasoning is not required telemetry.
+
+Completion, cancellation and restart must be observable. A crash or retry cannot silently erase prior attempts or grant broader access. Exact orchestration, checkpoint store, retry policy and worker framework remain deferred. Proposed remedies must cross an independently authorized action boundary with configured approvals and outcome verification. Production write privileges are not implied by investigation access.
+
+### 22.4 Evaluation service and quality architecture
+
+Evaluation is a distinct asynchronous service with workers. It supports code, permitted model judges, human annotation and external scores. Targets include observation, run, session and experiment output; workflows include production sampling, historical reevaluation, datasets, offline experiments and regression comparison. Release sequencing is deferred.
+
+Evaluation must record target/version, evaluator/rubric/model/config version, attempt status, permitted supporting evidence, result and correction/supersession lineage. Separate evaluator health/latency/cost from the target's quality. Apply shared authZ when scheduling, retrieving targets, invoking tools/models and publishing results. Isolate untrusted code evaluators; choose the mechanism before enabling them.
+
+Prevent uncontrolled evaluation recursion: instrument the platform's workers, but make eligibility/exclusion and budgets explicit before enabling automatic evaluation of evaluator traces. Aggregates require declared populations, denominators, sampling and missing/failed/skipped treatment. Compare agent/evaluator versions deliberately; do not mix incompatible scoring definitions into a single unexplained success rate. Canonical results remain authoritative [R21–R23].
+
+### 22.5 Deployable services and optional hybrid
+
+Implementation responsibilities may be packaged as ingest-gateway, telemetry-query, platform-api, context-service, evidence-service, agent-worker, evaluation-worker and optional web-ui. Names are illustrative. They are independently deployable/scalable responsibilities; a local combined distribution is permitted. Async projection ownership is in the Telemetry Data Plane; Intelligence serves the projection through authorized APIs and owns evaluation semantics. No fifth plane is introduced.
+
+Headless operation and split self-hosted UI are supported product modes. A complete local management/configuration/policy authority is required for self-hosted core operation. Hosted UI/control may be added later as an optional client or explicitly delegated manager. It cannot become an unapproved dependency for local ingest, routine alerts or administration.
+
+Raw telemetry, protected payloads, service context, investigation state, evaluation records and privileged action execution stay within the customer trust boundary unless explicit policy permits otherwise. External model calls are egress and require configured destination/content rules. Local inference remains possible. Remote UI needs an approved network path, authentication and backend enforcement; CORS alone provides none of those.
+
+| Failure | Required independence / limit |
+| --- | --- |
+| UI or optional hosted management unavailable | Local ingestion, queries, routine alerts, APIs and enabled workers continue |
+| Agent/evaluation worker or external LLM unavailable | Traditional ingest/query/alerts and management continue; job lag/failures visible |
+| Evidence/context service unavailable | Raw telemetry and deterministic alerts continue; investigations report missing inputs |
+| Local management unavailable | Existing operations may continue only with valid local credentials/policy within defined freshness; high-risk or unverifiable authority fails closed |
+| One signal store unavailable | Other healthy signal paths remain usable; evidence reports partiality; failed path uses declared buffering/admission policy |
+| Query/AI load saturated | Ingestion and routine alerts retain agreed protected resources; throttle/cancel expensive reads |
+
+Exact offline credential windows, revocation behavior, network topology and recovery SLOs must be selected and tested. This matrix does not promise indefinite authorization caching or availability through failure of required durable storage.
+
+## 23. Recovery architecture and benchmark suite — REC-01–REC-06
+
+### 23.1 Why recovery is a separate requirement
+
+The owner reported that a company Vector collector accumulated more than 24 hours of telemetry during an internet outage, then OpenObserve caught up in roughly one hour using 16 threads. **This is user-reported operational experience, not an independently reproduced measurement, language benchmark or universal requirement.** Signal mix, volumes, hardware, thread meaning, configuration, continued live traffic and the exact completion boundary were not established.
+
+Rust alone cannot explain that observation. Buffers, acknowledgement behavior, batching, compression, write durability, network/storage bandwidth and concurrent work all matter. The platform therefore requires explicit replay/recovery design and measurement in addition to steady-state throughput.
+
+### 23.2 Locked recovery responsibilities
+
+| ID | Decision | Required behavior |
+| --- | --- | --- |
+| REC-01 | Durable replay and controlled backpressure | Configured source/platform queues retain retryable data within declared capacity/failure scope; restart/reconnect resumes; overflow has explicit block/retry/drop disposition and observable counters |
+| REC-02 | Fresh-versus-backlog scheduling | Support bounded scheduling classes and tenant fairness; protect fresh telemetry and ensure backlog progresses; logical lanes need not be physical queues |
+| REC-03 | Late and out-of-order arrival | Preserve original event time plus ingestion/visibility time; declare signal-specific acceptance windows; handle query/cache/alert/evaluation implications and expose incomplete replay coverage |
+| REC-04 | Adaptive bounded concurrency | Adjust admitted/in-flight work to backend latency, throttling/errors and resource pressure within configured bounds; bound memory/queues and avoid retry storms |
+| REC-05 | Explicit delivery states | Accepted, durable, queryable and processed are separate milestones; distinguish rejects, partial results, duplicates, drops and pending work; queue drain is not proof of end-to-end completion |
+| REC-06 | End-to-end recovery benchmarks | Measure source outage through durability, query visibility and optional projection/evaluation recovery under concurrent live traffic, queries and background work |
+
+REC-01 is finite-capacity reliability, not unconditional zero loss. Publish overflow, retention, disk failure and retry limits. An explicitly chosen lossy profile must identify loss, and cannot silently satisfy a lossless benchmark. Vector's buffering model and OTel Collector resilience document finite buffering/failure boundaries [R24, R27].
+
+REC-02 may reserve or weight capacity for both live traffic and backlog, with hard admission ceilings. Exact weights, minimum progress, ordering and fairness algorithm are deferred. New-over-old scheduling can create out-of-order samples; enable it only where the selected backend/window and downstream semantics support it. vmagent documents concurrent fresh/backlog paths and these limitations [R28].
+
+REC-03 requires documented historical-age/future-skew/out-of-order acceptance per signal and tenant. Accepted late data must be queryable at original event time. Rejected/expired data needs an attributable disposition, not silently altered timestamps. Cache invalidation, recording rules, alert notifications and evaluation target revisions must have explicit policy; replay must not accidentally fire old production notifications as if they were current. Mimir's documentation shows that late data affects query caching and rules [R29].
+
+REC-04 requires a measurable stable controller or justified equivalent bounded strategy, not a particular algorithm. Provide a fixed-concurrency mode for comparison and diagnostics; cap retries with jitter/backoff. Separate CPU-heavy parsing/compression from asynchronous I/O so runtime workers yield. Vector ARC is a design reference [R30]; Tokio fairness depends on bounded tasks and nonblocking work [R31].
+
+### 23.3 Delivery state and loss accounting
+
+| Milestone | Meaning | Must not imply |
+| --- | --- | --- |
+| Accepted | Admission/validation passed for identified records | Disk persistence or complete query visibility |
+| Durable | Configured persistence/replication boundary reached | Survival of failure outside that declared scope |
+| Queryable | Authorized queries can retrieve committed records for the relevant signal/time | AI projections, compaction or evaluation finished |
+| Processed | Specified derived processing stage completed | Every optional downstream workflow completed |
+
+These are logical milestones, not a fixed wire enum or requirement for per-record status RPCs. Define stage-specific watermarks/counters/probes that can substantiate the claims. Include partial batch acceptance/rejection and ambiguous acknowledgement failures. Keep source submission counts, logical identities, retry attempts and physical duplicates distinct. A duplicate attempt is not necessarily a second logical event; conflicting copies need a defined reconciliation policy.
+
+Reconcile produced/eligible records against pending, queryable unique records and explicitly disposed records under the selected model. Report unexplained gaps separately. Physical downstream duplicates, unsupported deduplication and probabilistic checks must be disclosed. Counts alone cannot prove content correctness; use deterministic IDs/checksums and representative value/relationship checks where supported. Do not require a custom per-event ingest ID to become a normal metrics label.
+
+### 23.4 Recovery capacity model and reference scenario
+
+For a constant live rate lambda, backlog B and sustainable total useful processing capacity mu at the same completion boundary, recovery time is approximately B / (mu - lambda), requiring mu > lambda. A 24-hour backlog cleared in one hour while the original live rate continues implies about 25 times the steady-state useful capacity (24 times backlog plus 1 times live). This is an illustrative fluid-queue calculation, not a measured product claim. Compression, bottleneck changes, compaction, multiple stages, retries and autoscaling may invalidate a single-rate approximation.
+
+**Reference scenario REC-REF-24:** run a 24-hour source-to-backend disconnect, preserve source data durably, reconnect while live traffic continues, and evaluate a one-hour catch-up aspiration. Include a constrained profile described as 16 threads only after defining which workers/runtime threads and the actual CPU quota. Sixteen threads are not automatically sixteen cores or sixteen vCPUs. Use the user's experience as motivation; select actual release SLOs through the workload charter. Faster scaled/compressed simulations may support development, but do not replace a wall-clock endurance run for a production reliability claim.
+
+### 23.5 Required failure/recovery scenarios
+
+- Short and prolonged network loss, timeout/acknowledgement ambiguity, throttling and reconnect storms; include REC-REF-24 as a measured reference or explicitly unrun case.
+- Collector and ingest process restart during buffering/replay; node/disk loss according to declared durability scope; disk full, queue full and retry expiry.
+- Slow/unavailable signal store, bandwidth/disk constraints, projection worker outage and delayed evaluation backlog.
+- Duplicate/reordered batches, late spans, incomplete traces, poisoned records, expired/denied payloads and cross-tenant replay attempts.
+- Replay with ongoing live traffic, representative raw/semantic queries, deterministic alerts, compaction and AI/evaluation activity. Isolated recovery tests alone are insufficient.
+- Noisy-tenant pressure, fresh-data priority and backlog progress; compare fixed and adaptive concurrency; test reduced capacity and overload, not only unconstrained scaling.
+
+### 23.6 Benchmark measurements and acceptance
+
+Report offered, admitted, durable and queryable rates in both signal units and bytes; source backlog bytes/age; time to reconnect, first fresh visibility and full eligible backlog visibility; fresh-data P50/P95/P99 lag; projection lag and evaluation backlog separately; missing/rejected/dropped/duplicate/conflicting data; CPU, RSS/peak memory, allocations/GC where applicable, disk/network I/O, storage amplification and cost. Report alert freshness and query tail latency during recovery.
+
+Measure the slowest relevant durable/queryable stage, not only intake API throughput. Report post-ingestion compaction/settling separately. Define recovery end from durable/queryable watermarks and integrity checks; source queue empty is insufficient.
+
+Before a pass/fail run, declare workload, hardware/resource limits, engine/collector versions, topology, durability, replication, retention/lateness policy, concurrency and batching, active live rate, query mix, allowed loss/duplicates, freshness/backlog SLOs and cost ceiling. Pass requires correctness, no unexplained loss, bounded resources, tenant isolation and the agreed fresh/backlog completion targets for that profile. Until numbers are approved, outcomes are measurements, not a parity or release-pass claim.
+
+## 24. Language strategy and performance validation
+
+### 24.1 Rust-first preference supersedes Go-first
+
+**PREFERRED direction approved after the outage analysis:** use Rust for backend code the project owns: ingest admission/routing/processing, telemetry adapters/query gateway, evidence/context services, management APIs, authorization enforcement integration and AI observation projections. Prefer Rust if future owned storage/query components become justified. This preference does not decide to build a storage engine.
+
+Use Python for pluggable investigation/model orchestration and evaluation workers. Use TypeScript for the optional default web UI. Client SDKs may use their ecosystem's languages. Existing OTel Collector distributions, VictoriaMetrics and other Go components remain independent dependencies; do not rewrite them for language uniformity. Go may be appropriate for custom Collector extensions, operators or providers when justified.
+
+Rust is favored for explicit ownership/allocation control, predictable resource design under replay and analytical workloads, safe concurrency and access to Arrow/DataFusion. DataFusion is a Rust query-engine ecosystem reference, not the selected platform engine [R32]. Rust does not supply bounded queues, fairness or recovery automatically, and it can still allocate excessively, block runtime threads or run out of memory.
+
+Go remains a credible alternative with mature infrastructure libraries and accessible concurrency. Its concurrent GC involves CPU/memory trade-offs; low memory limits and high allocation pressure can reduce progress [R33]. This does not establish that Go cannot meet the requirements. Compare measured useful work and tails under equal semantics; do not infer a language verdict from two different products or older isolated case studies. Rust complexity, build times, contributor onboarding and implementation quality are material costs.
+
+### 24.2 Required production-shaped Rust-versus-Go prototype
+
+**Required before broad owned-backend commitment.** Implement the same representative vertical slice in both languages: real protocol decoding and validation, shared-authZ enforcement, capture/redaction, batching/compression, bounded async I/O, durable retry/replay path, identical signal-store adapter, query/evidence response serialization and asynchronous projection handoff. Use a real selected candidate store/queue where feasible; label substitutions. A no-op HTTP benchmark cannot settle this decision.
+
+Match functional semantics, durability boundary, payloads, compression, batching, auth policy, storage/network topology, resource quotas and background workloads. Pin compiler/runtime/library versions and release-build options. Give both implementations competent idiomatic tuning; record optimization time. Where ecosystem libraries or engine integration force different designs, report the difference as a stack comparison rather than isolate it as language causality.
+
+Run warm/cold and repeated trials with sustained load, bursts, deep/wide agent traces and large permitted payloads; include mixed ingestion/query/compaction/evaluation activity and the Section 23 recovery suite. Report distributions, run-to-run variability, errors and raw configuration/results. Record CPU quota versus actual OS/runtime threads, Go GOMAXPROCS/GC settings and Rust runtime/blocking-pool limits. Include the defined 16-thread reference profile plus a resource-scaled comparison; do not tune one variant by dropping validation or reducing durability.
+
+The decision record must cover throughput, P95/P99 latency, steady/peak RSS, allocation/GC behavior, recovery to queryable state, fresh/backlog fairness, resource/cost efficiency, correctness and maintainability. Include development/debugging effort, contributor skill needs, compile/build friction and operational complexity.
+
+**Acceptance:** both variants must satisfy the same correctness/security/recovery gates before performance comparisons count. Review against the predeclared workload/SLO/cost charter. Rust remains preferred if it meets those gates with acceptable delivery/maintenance cost and supports long-term requirements. A failure or material trade-off triggers a documented decision with the owner; it does not silently revert to Go. No numeric Rust-over-Go speedup is a required outcome.
+
+### 24.3 Four benchmark suites
+
+| Suite | Workload | Required comparison / measures |
+| --- | --- | --- |
+| Traditional telemetry | Separate metrics, logs and traces, then concurrent reads/writes; series churn, search selectivity, retention/indexing | VictoriaMetrics/Mimir for matching metrics paths, OpenObserve/Loki for logs, OpenObserve/Tempo for traces where capability matches |
+| AI observability and evidence | Deep/multi-agent traces, large optional content, run/session lookup, semantic correlation/context, late scores and quality analytics | Projection correctness/lag, evidence provenance/completeness, bounded retrieval cost, evaluator throughput and reproducibility |
+| Mixed-load isolation | Ingest + raw/semantic queries + routine alerts + compaction + projections/evaluation | Query/alert tails, tenant fairness, protected ingest, memory/cost stability; compare enabled and disabled AI workloads |
+| Reliability and recovery | Disconnect/restart/overflow/reorder/late data; backlog replay with live traffic | Section 23 end-to-end milestones, integrity, fresh/backlog fairness and resource/cost envelope |
+
+Reference projects are models and guides. Grafana's UI/server is not itself a substitute for benchmarking the corresponding Mimir/Loki/Tempo engines. Select equivalent durability, replication, sampling, indexes, retention and query semantics. Publish relevant feature gaps rather than reporting a misleading aggregate “winner.” The goal remains comparable fitness on representative agreed workloads, not beating every mature system.
+
+## 25. Implementation gates, unresolved hard choices and next steps
+
+### 25.1 Locked, preferred, proposed and deferred
+
+| Category | Current contents | Change rule |
+| --- | --- | --- |
+| Locked architecture | Four planes, complete headless core, shared authZ/local authority, deterministic telemetry/alerts, three Evidence Contracts/six principles, A1–A8, D1–D6, I1–I6, evidence/context boundaries, REC-01–REC-06 | Preserve; conflicting changes require explicit ADR |
+| Approved preferences | Rust owned backend, Python AI workers, optional TypeScript UI; reuse proven independent OSS | Validate production slice; document material exceptions |
+| Proposed representations/defaults | Candidate JSON/enum/tool names, metadata-first capture default, exact logical job states, at-least-once/idempotent handoff mechanism | Prototype and review before stable schema/policy; not implicitly locked |
+| Deferred hard choices | Storage build/integrate scope, products, OSS license, public schemas, policy engine/propagation, release workload/SLOs, hybrid connectivity | Resolve only when the implementation task reaches the consequential choice |
+| Acceptance criteria | TEST-001–TEST-041 plus suites and prototype procedures | Required future evidence; none are reported as executed by this architecture document |
+
+### 25.2 Genuine unresolved decisions
+
+| Choice | Why it matters / when required | Recommended next action |
+| --- | --- | --- |
+| Owned storage engine versus integration/distribution | Changes project scope, staffing and operations; must precede major storage implementation | Start with candidate adapter prototypes; decide ownership scope from workload results |
+| Workload and quantitative acceptance charter | Without volume, cardinality, trace/payload distributions, retention, hardware and cost envelope, “comparable” cannot pass/fail | Collect representative anonymized shapes; agree profiles and thresholds before scored benchmarks |
+| Language commitment | Switching later is expensive; preference is not measured evidence | Run production-shaped Rust/Go gate, then record final commitment/trade-offs |
+| Durability/ordering/late-data policies | Determines source release, failure loss envelope, backend compatibility and recovery semantics | Pick and test per-adapter acknowledgement boundary, historical windows and overflow policy |
+| Public schema and lifecycle | Completion, revisions, deduplication and result semantics affect compatibility and correctness | Validate D/I/REC examples; freeze only after real adapters and failure tests |
+| AuthZ model/engine and offline operation | Shared model is locked; cache/revocation/lifetime trade-offs remain | Define threat/availability cases and local enforcement tests before production exposure |
+| Capture, deletion and reproducibility policy | Evaluators may need content that is withheld or later removed | Select defaults/retention/deletion propagation before real sensitive capture |
+| OSS license and dependencies | Pure OSS direction is locked; exact license and redistribution conditions are not selected | Resolve before public release or mandatory dependency adoption |
+| Initial feature/release scope | Full vision exceeds the first vertical slice | Choose minimum deployable headless path and evaluation workflow after prototype evidence |
+| Optional hybrid | Hosting/network/metadata/policy authority is consequential | Defer until a hosted edition is explicitly pursued; preserve local independence now |
+
+There is no demonstrated fundamental contradiction among the approved requirements. These are decision gates for implementation and release, not reasons to reopen the approved architecture. Capacity and recovery aspirations may conflict with a chosen budget/hardware profile; surface the measured trade-off rather than promising all three unconditionally.
+
+### 25.3 Immediate sequence
+
+1. Maintain this specification as the single architectural lineage. Reuse the existing document workspace; do not fork another architecture or start a parallel design conversation. Word is generated from the same Markdown.
+2. Define the benchmark workload/acceptance charter and production prototype slice, including the owner's outage reference and exact completion milestones.
+3. Implement Rust and Go variants with one metrics candidate and one log/trace candidate as needed to exercise the same contracts; retain backend-only operation and shared authorization.
+4. Run correctness, isolation and failure/recovery gates, then performance comparisons. Use results to decide language commitment and storage ownership/candidates.
+5. Validate public evidence/execution/evaluation schemas and concrete policies before stable release. Resolve remaining hard choices only at their relevant gate.
+
+### 25.4 Additional primary references checked for this revision
+
+- **R26 — [OTLP specification](https://opentelemetry.io/docs/specs/otlp/).** Full/partial success, rejection and retry semantics; not a universal storage-durability promise.
+- **R27 — [Vector buffering model](https://vector.dev/docs/architecture/buffering-model/).** Disk/memory buffering, capacity and backpressure rationale.
+- **R28 — [vmagent persistence and processing order](https://docs.victoriametrics.com/victoriametrics/vmagent/#on-disk-persistence-and-data-processing-order).** Persistent backlog and concurrent fresh-data path; out-of-order compatibility limits.
+- **R29 — [Mimir out-of-order ingestion](https://grafana.com/docs/mimir/latest/configure/configure-out-of-order-samples-ingestion/).** Historical data windows and implications for caching/rules.
+- **R30 — [Vector adaptive request concurrency](https://vector.dev/docs/architecture/arc/).** Feedback-based request concurrency as an architectural reference.
+- **R31 — [Tokio runtime](https://docs.rs/tokio/latest/tokio/runtime/).** Async runtime behavior and bounded-task/nonblocking fairness assumptions.
+- **R32 — [Apache DataFusion introduction](https://datafusion.apache.org/user-guide/introduction.html).** Rust/Arrow query-engine ecosystem; not an engine selection.
+- **R33 — [Go garbage collector guide](https://go.dev/doc/gc-guide).** Allocation, CPU/memory trade-offs and soft memory-limit behavior.
+
+External documentation evolves. Pin versions and verify selected component behavior during implementation. Vendor performance reports and workload-specific language case studies are not imported as platform acceptance evidence. No external claim establishes that Rust universally outperforms Go, or that the owner's recovery result will reproduce on different workloads.
+
+End of specification v0.5.

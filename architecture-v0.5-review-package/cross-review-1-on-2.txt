@@ -1,0 +1,52 @@
+CROSS-REVIEW 1 ON INDEPENDENT REVIEWER 2
+Scope: challenge false positives, severity, overrestrictive remedies, and already-covered requirements. Independent reports remain unchanged. This cross-review read only reviewer-2-independent.txt and the cited specification passages; primary-source spot checks are noted below.
+
+DISPOSITION SUMMARY
+R2-01: ACCEPT the confidentiality composition risk and two-user/revocation tests; retain conditional P1 consequence, but narrow the claim to an implementation/conformance clarification of existing A6/A7 rather than an absent privacy invariant or architecture blocker.
+R2-02: ACCEPT source-attribution/collision tests; DOWNGRADE to P2 specification/threat-model clarification. REJECT universal source/trust-domain partitioning of correlation keys as written because it can break legitimate distributed traces.
+R2-03: ACCEPT P2 conditional native-query capability gate, preserving the readonly=1 qualification.
+R2-04: ACCEPT P2 IaC/provider feature gate, with no universal state-free or retroactive artifact-erasure promise.
+R2-05: ACCEPT the clean-install test; DOWNGRADE to P3 acceptance-test precision in the absence of implementation evidence. Secure headless initialization is already required by the existing invariants, so this is not an architectural omission.
+No entire finding is rejected, but two priorities and parts of the framing/remedies should change. None demonstrates a fundamental architecture contradiction.
+
+R2-01 — What survives and what should change
+The concrete distinction between authorizing a source handle and authorizing copied content is sound. Reauthorizing a citation cannot protect secret text copied into a broadly readable report. A worker's read authorization also does not by itself establish authority to disseminate that information to every report reader. This is a high-consequence release test worth retaining.
+However, MD 842–844 already cover result publication and resource/task scope, while MD 852 covers processing, storage, retrieval, export, classification and retention. MD 919 explicitly covers removal propagation to derived representations. It is inaccurate to imply the specification currently permits laundering or that it lacks a general confidentiality obligation. The additional value is a derived-artifact authorization rule and fixture that operationalize those requirements.
+Suggested synthesis wording: “Before serving persisted/generated or cached artifacts, demonstrate that their effective readership and egress policy obey the applicable source-content confidentiality/classification rules, including authorized sharing/declassification and changes in authority.” This avoids selecting blanket ACL-intersection semantics as the only design. Do not require every reader of a policy-approved aggregate to read every contributing event, or automatically revoke a valid explicitly declassified artifact just because a source ACL later changes. The independent review already makes the first exception; preserve it prominently and apply the same policy distinction to revocation/deletion fixtures.
+The source documents support examining retrieval ACLs, caches, citations and derived representations. They do not establish a universal “inherit all source ACLs forever” model. AWS and Google sources were spot-checked and support the narrower claims. Suggested severity in synthesis: conditional P1 security-conformance gate, high impact if violated; no demonstrated present vulnerability.
+
+R2-02 — Downgrade and repair the namespace remedy
+The threat is real: current W3C Trace Context security guidance explicitly discusses forged trace-ID collisions. A valid tenant-wide writer can submit misleading service attributes. Exact trace-ID matching does not authenticate its asserted producer or prove causality.
+But MD 184 already requires policy enforcement at ingestion, MD 237 requires actual resource/data scope on public APIs, MD 370 requires correlation authority/heuristic status, and MD 995 requires authenticated admission. A constrained service A writer impersonating service B would violate these existing requirements if the installation claims that writer-level isolation. An intentionally tenant-wide collector credential cannot magically authenticate the actual workload behind it. “Source authenticity” therefore needs a declared trust model; it is not a universal missing cryptographic or per-service authorization layer.
+Most important corrective point: “Namespace all correlation ... keys by tenant and appropriate source/trust domain” is overbroad. A legitimate trace commonly crosses services, collectors, credentials and trust boundaries. Making the producer/trust domain a mandatory component of a shared trace lookup/join key would fragment the canonical trace and conflict with A1/D1/D2. The report's final legitimate-trace test is good but does not eliminate the ambiguity in that remedy.
+Replace with: namespace authorization/storage isolation keys by tenant; preserve canonical trace IDs and cross-source links. Record attested admission principal/channel separately from claimed workload identity. Partition collision/deduplication or observation ownership only where necessary to avoid silently overwriting another source's record. Correlation can span sources, but it must retain their separate attribution and must never confer mutation, finalization, read or membership authority merely from ID possession. A shared trusted collector may attest collector-origin rather than workload-origin; say which assurance is provided. Quarantining every cross-service parent/link is unacceptable.
+Suggested severity: P2 threat-model/data-integrity implementation gate. A concrete design where ID equality changes ACLs or permits overwrites would merit P1 when demonstrated. Do not infer such a design from preservation of IDs alone.
+
+R2-03 — Accept with existing qualification
+The SELECT/url() example is a valid capability class, and generic row predicates/timeouts do not prove network/file confinement. Current ClickHouse docs confirm that url() needs CREATE TEMPORARY TABLE and does not work with readonly=1. The independent report correctly discloses this; retain that sentence in every summary so the example is not misrepresented as a bypass of normal read-only credentials.
+Its proposed default-deny capability subset is sensible before enabling native escape hatches. Permit explicitly authorized external sources and connector traffic; do not categorically ban useful federation. This is a conditional adapter conformance test under already-required actual data authorization/egress controls, not an engine-selection blocker.
+
+R2-04 — Accept, with responsibility boundary
+The official Terraform documentation confirms sensitive masking is not state/plan omission. The secret-reference/write-only and canary-artifact tests add concrete value to TEST-010 and are not satisfied merely by suppressing API reads.
+Keep this as an IaC/provider feature gate. Do not require older Terraform/OpenTofu clients to support features they lack, or imply the platform can erase a user's already-saved plans, Git history or external backups. A documented supported secret-reference route plus accurate state/plan security requirements is a legitimate solution. Rotation invalidates a credential; it cannot erase historical external copies. The independent report largely respects these limits; avoid strengthening it in synthesis.
+
+R2-05 — Keep test; lower priority of the document finding
+A default-deny installation needs trusted initial authority and a clean-storage fixture usefully catches preseeded-test shortcuts. Nevertheless, TEST-001 calls for a headless install, and MD 686 explicitly forbids requiring UI to provision the backend or manage accounts. The specification already rejects the core bad outcomes. A missing detailed bootstrap procedure at this architectural stage is not proof of an insecure or impossible deployment.
+Recommended disposition: P3 acceptance clarification now; promote to a P1/P2 release defect only if the actual package requires insecure first-admin takeover, hidden manual database seeding, hosted authority, or cannot initialize. Add clean storage/no-identity to TEST-001 when the minimal management slice is built. Keep preprovisioned declarative owner setup as valid; not every deployment needs a remotely reachable one-time setup endpoint. Recovery can be separately scoped; do not enlarge a first-install test into a demand that every possible last-admin/IdP catastrophe be recoverable without a declared operator trust root.
+
+CITATION CHECKS / CORRECTIONS
+- Reviewer 2's MD 920 reference for deletion/immutability is off by one. Correct location is §19.1, MD 919 / DOCX P1032. MD 920 is blank. Fix both occurrences when citing in synthesis; do not change the frozen report.
+- R2-01 MD 852 / P0946 and MD 1018 / P1125 correspond to the quoted passages.
+- R2-02's W3C source directly supports forged collision risk; claims of source authentication remain reviewer inference, appropriately identified as such. W3C also defines cross-component distributed tracing, reinforcing why blanket source-partitioned correlation is unsafe.
+- ClickHouse readonly permissions were spot-checked and match the report's qualification.
+- Terraform sensitive-state behavior was spot-checked and matches the report. No new empirical exploit is established.
+- AWS/Google sources support ACL mapping/retrieval/cache considerations; the exact inherited-classification design remains a platform policy decision constrained by A7.
+Primary URLs rechecked:
+https://www.w3.org/TR/trace-context/#security-considerations
+https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture-generative-ai/data-and-retrieval.html
+https://docs.cloud.google.com/generative-ai-app-builder/docs/data-source-access-control
+https://clickhouse.com/docs/reference/functions/table-functions/url
+https://developer.hashicorp.com/terraform/language/manage-sensitive-data
+
+LIMITS
+No code, deployed policy, concrete adapter or provider was supplied, so all severity judgments concern specification precision and conditional risk. This cross-review does not establish actual unauthorized access. It neither revises the independent reports nor reads the historical conversation.

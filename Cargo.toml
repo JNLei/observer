@@ -1,0 +1,3 @@
+[workspace]
+members = ["backend/health", "benchmarks/ingest/rust"]
+resolver = "2"

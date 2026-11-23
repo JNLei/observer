@@ -1,0 +1,267 @@
+INDEPENDENT REVIEW 3 — AI-Native Observability Architecture Specification v0.5
+Frozen independent report — 2026-11-22
+Scope: agent tracing/evaluation, current OpenTelemetry GenAI semantics, evidence/data contracts, lifecycle and consistency.
+
+Assessment
+==========
+The architecture is viable as a conceptual baseline. I found no P0 defect and no demonstrated fundamental incompatibility requiring replacement of the four planes, asynchronous evaluation, canonical telemetry, or deferred storage strategy. I found six concrete risks: one P1 security contract gap and five P2 compatibility/correctness/measurement gaps. These are requirements to tighten before the relevant capabilities are enabled; they do not justify treating every deferred schema, timer, engine or policy choice as an architecture blocker.
+
+The most consequential gap is that reauthorizing evidence handles does not protect sensitive facts copied into a saved summary, evaluator explanation, dataset item or investigation report. The specification needs an explicit rule for derived artifact disclosure, rather than relying only on shared authorization machinery. Other useful amendments concern log-event-based GenAI observations/evaluations, immutable identities for the evidence actually evaluated, producer-controlled correlation identities, correction-safe metric exports, and validation of judge quality.
+
+Independence and input verification
+==================================
+I did not retrieve the source conversation, read another reviewer's report, or use another reviewer's conclusions. I read the entire maintained Markdown and the DOCX paragraph extraction, and directly inspected word/document.xml in the original DOCX. The supplied paragraph extraction matches every numbered paragraph checked against the original DOCX, with zero content mismatches. The original has 1,346 paragraph elements, including blank paragraphs; 23 tables. Paragraph identifiers below refer to the original DOCX sequence (P0001, etc.), including paragraphs inside tables. MD locations refer to spec-v0.5.md, not the numbered helper file's own physical line numbers. I did not edit either source artifact. This is a content/architecture review; I make no independent visual-layout certification of the Word pages.
+
+The requested RTK.md was absent in the working directory and checked ancestor directories. The environment's rg resolves incompatibly to grep; I used normal file reading and targeted Python searches after the first rg attempt failed. No substantive project instruction was inferred from those failures.
+
+Current-source check: I searched official OpenTelemetry documentation and its separate official GenAI repository, followed the moved GenAI documentation, and retrieved the repository's main commit: 4181b1ebe55da7edb3538636c45ae64af369b5ef, committer timestamp 2026-11-22T02:19:31Z. The GenAI conventions remain Development. Current agent, inference, tool and event guidance is broader than a span-only data path. Saved local research copies are in work/reviewer3; those are working notes, not user deliverables. Web-rendered and directly retrieved raw Markdown can have different presentation/line counts, so external citations below use URLs and section/attribute names rather than web extraction line numbers.
+
+Finding R3-01 — Derived artifacts can disclose protected evidence despite handle reauthorization
+============================================================================================
+Severity: P1 high.
+Classification: risk / security contract gap, not an explicit permission to disclose.
+Confidence: high (0.94).
+Gate: before saved semantic summaries, reports, evaluation explanations, datasets or shared quality views can contain sensitive source-derived information.
+
+Exact locations:
+- MD 400, Section 8.2; DOCX P0432: "Source references must be tenant-scoped and reauthorized when dereferenced."
+- MD 842–846, A6; DOCX P0941–P0943: common authorization covers evaluation records; sharing policies remain deferred.
+- MD 852, A7; DOCX P0946: "Access to a trace does not automatically imply access to every protected payload."
+- MD 1016–1018, Section 22.1; DOCX P1124–P1125: saved handles are reauthorized, and a semantic summary is derived evidence with cited inputs.
+
+Counterexample:
+An investigator or evaluator legitimately reads an HR-sensitive protected payload within a tenant and produces a report or score explanation that quotes an employee's medical details. A second user can read the investigation report/evaluation result but cannot read the protected payload. The result resource's own authorization check succeeds and its source handle correctly returns DENIED. The sensitive fact is already present in the report body. The same problem arises with cached summaries, copied dataset ground truth and a source permission revoked after report creation. Reauthorizing only the citation cannot undo disclosure through the derived artifact itself.
+
+Impact:
+Field-level/content permissions can be bypassed without a cross-tenant query or worker privilege escalation. All listed services can use one policy engine and still implement this vulnerability. This is especially material because A7 deliberately distinguishes trace visibility from payload visibility.
+
+Protections acknowledged:
+A6 applies authorization to result publication; A7 covers processing, retrieval and classification; Section 19.1 requires deletion propagation. These constrain the implementation, but do not define the relationship between source restrictions and a new derived resource's readability. "Use shared authZ" does not choose that relationship automatically. This is a refinement of the approved privacy invariant, not a request to preselect OPA/OpenFGA or a sharing policy UI.
+
+Concrete fix:
+Add a derived-disclosure invariant: persisted summaries, findings, evaluator explanations, dataset copies, caches and exports retain source sensitivity/authorization lineage. Their content is readable only under an explicit policy that permits the derived disclosure. Options include source permission checks, inherited classification/ACLs, field redaction, or a separately authorized and audited declassification/aggregation step. Recheck it on read after revocation. Do not require readers of an intentionally sanitized aggregate to possess every original ACL; make that deliberate exception explicit and testable.
+
+Validation criterion:
+Two users in one tenant share report access but only one has payload access. Generate a report/evaluation/dataset from a payload containing a unique canary. The restricted user cannot obtain the canary through report text, explanations, cached results, search snippets, exports or dataset items. Revoke the privileged reader's source access and repeat. An explicit declassification policy may expose only its approved sanitized fields.
+
+Official sources:
+- https://openfga.dev/docs/modeling/parent-child — permission inheritance is explicitly modeled, rather than supplied merely by using the same authorization engine.
+- https://www.openpolicyagent.org/docs/filtering — data authorization includes filtering returned data, beyond resource-level allow/deny.
+- https://docs.aws.amazon.com/lake-formation/latest/dg/materialized-views.html — illustrates an explicitly chosen derived-view disclosure model that can intentionally differ from source permissions. Cited as evidence that derived access is a separate policy choice, not as a required product or policy for this platform.
+
+Finding R3-02 — Span-only projection flow omits a current GenAI log-event route
+============================================================================
+Severity: P2 medium.
+Classification: risk / interoperability gap; conditional on the selected compatibility matrix.
+Confidence: high (0.95).
+Gate: ingestion-normalization compatibility design, before claiming support for convention versions/content modes that emit these events.
+
+Exact locations:
+- MD 798–802, A1; DOCX P0919–P0921: OTLP interoperability and version selection.
+- MD 991–998, I1–I6 / flow; DOCX P1097–P1115.
+- MD 998; DOCX P1115: "Canonical traces additionally feed asynchronous AI projections; authorized evaluation submissions/feedback have their own APIs and worker path."
+
+Counterexample:
+A compatible instrumentation emits span metadata but content only as GenAI operation-detail LogRecords. An external evaluator emits gen_ai.evaluation.result through OTLP logs, identifying the target through gen_ai.response.id because its span ID is unavailable. The logs pipeline accepts and stores both successfully. A projection built exclusively from canonical traces cannot obtain the content; the separate evaluation API never receives the external judgment. A later raw log search can find both, while agent/evaluation APIs silently lack them or invent another target hierarchy. An event can also precede its associated span, or survive when the span was not retained.
+
+Impact:
+Accepting a standard GenAI record at OTLP ingress does not imply it participates in the advertised unified observation/evaluation model. It can cause unexplained missing evidence, lost external scores, incorrect NO_MATCH results, or mismatched replay after a projection rebuild.
+
+Protections acknowledged:
+The spec correctly marks upstream Development, defers versions/mappings, permits independent signal paths, supports missing data, and forbids invented ancestry. I am not requiring support for every evolving upstream event. The missing architectural responsibility is an explicit disposition and authorized cross-signal association for event records in whatever matrix is selected. This can be resolved without selecting an engine or making logs and traces one physical pipeline.
+
+Concrete fix:
+Change the flow text to include supported canonical GenAI log events and authorized evaluation imports as possible asynchronous inputs. Require a per-version disposition: promote/link to a canonical AI/evaluation record, retain only as raw evidence with a documented capability limitation, or reject an unsupported shape explicitly. Preserve EventName, producer/instrumentation provenance and original trace/span/response identifiers. Reconcile late/orphan events using tenant- and producer-qualified identity, without making up a missing span or treating a producer's score as independently verified truth.
+
+Validation criterion:
+For each selected convention version, exercise content on span, event-only content, content on both, and evaluation.result with and without a retained span. Reorder and duplicate these records; restart the projector; rebuild it. Supported inputs must yield stable associations and attribution; unsupported inputs must be visible capability limitations. Canonical content/results must not be double counted when two representations coexist.
+
+Official sources:
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/4181b1ebe55da7edb3538636c45ae64af369b5ef/docs/gen-ai/README.md
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/4181b1ebe55da7edb3538636c45ae64af369b5ef/docs/gen-ai/client-inference.md — operation-details event can store input/output details independently of traces.
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/4181b1ebe55da7edb3538636c45ae64af369b5ef/docs/gen-ai/gen-ai-events.md — content capture modes and evaluation.result response-ID fallback.
+- https://opentelemetry.io/docs/specs/otel/logs/data-model/ — named events are LogRecords and trace/span association can be absent.
+
+Finding R3-03 — Versioned targets do not identify the mutable evidence actually evaluated
+=====================================================================================
+Severity: P2 medium.
+Classification: risk / consistency gap within an acknowledged implementation gate.
+Confidence: high (0.92).
+Gate: before connecting asynchronous evaluation to mutable query-backed targets; not merely before public API freeze.
+
+Exact locations:
+- MD 467–473, Section 8.5; DOCX P0482–P0485.
+- MD 471; DOCX P0484: "results may change due to late data, retention, reindexing, and rollups."
+- MD 927–935, Sections 19.2–19.3; DOCX P1036–P1040.
+- MD 1047, Section 22.4; DOCX P1157: target/version, configuration/version and permitted supporting evidence are recorded.
+
+Counterexample:
+Target run/v1 is finalized with a query handle for its service/time interval. Attempt A resolves the handle to spans S1 and S2 and obtains a passing judgment, then crashes before publication. A late failure span S3 becomes queryable. Retry B uses the same run/v1, evaluator/version and logical result key but evaluates S1/S2/S3 and fails. Idempotent publication chooses one output, while the stored target and query reference do not identify which set the winning judge actually saw. A multi-source session target can also combine trace data from one visibility frontier with payload/context data from another. A target version alone does not establish a consistent evidence cut.
+
+Impact:
+Auditable attempts and idempotent publication can coexist with irreproducible or misleading result lineage. Regression comparison can attribute an evidence change to an agent/evaluator change. A later successful re-query cannot prove which evidence supported the original conclusion.
+
+Protections acknowledged:
+The spec expressly recognizes mutable query references, snapshots versus queries, late evidence, provisional completion and target revisions. Therefore absence of a chosen snapshot product is not a defect. The gap is the invariant tying an evaluation attempt to the particular resolved evidence, even when the chosen policy permits mutable references.
+
+Concrete fix:
+Require each attempt/result to identify a resolved evidence manifest or equivalent: exact source record/revision identities and permitted content versions, source/adapter/transform versions, resolved-at/as-of information, and coverage/limits. A snapshot is one solution; immutable retained record IDs or explicit mutable-query manifests are others. If inputs change, either create a new target/input revision or label the attempts as evaluating different evidence sets. Never infer input equality from equal query fingerprints or target IDs. Missing/redacted content still remains unavailable; the manifest must not resurrect it.
+
+Validation criterion:
+Pause after evidence resolution, insert late data/change a context version, crash and retry. Every published judgment must resolve to the input set actually used, and two different input sets cannot masquerade as the same fixed evidence revision. Repeat across independent logs/traces/context stores without requiring global serializable storage.
+
+Official sources:
+- https://opentelemetry.io/docs/specs/otel/schemas/ — source schema and transformations are part of interpreting data; a query fingerprint is not a content version.
+- https://langfuse.com/changelog/2025-10-16-llm-as-a-judge-execution-tracing — inspecting actual judge inputs/outputs supports auditability. This is rationale, not adoption of Langfuse's execution model.
+- https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge — current evaluation input mappings and inspectable execution attempts.
+The counterexample is a consistency inference from this specification's mutable-reference and asynchronous-retry provisions, not a claim that OpenTelemetry prescribes a particular manifest schema.
+
+Finding R3-04 — Correlation needs a trust dimension independent of exact identifier equality
+=========================================================================================
+Severity: P2 medium.
+Classification: risk / evidence-integrity gap.
+Confidence: high (0.93).
+Gate: identity normalization and evidence correlation before accepting less-trusted producers.
+
+Exact locations:
+- MD 336, Section 7.1; DOCX P0375: preserve W3C trace context.
+- MD 370, Section 7.3; DOCX P0392: "how the link was established (exact_trace_id, exemplar, service_time_window, deployment_mapping, inferred) and whether it is authoritative or heuristic."
+- MD 800, A1; DOCX P0920: preserve source identity, relationships and provenance.
+- MD 914, D3; DOCX P1020–P1021: "immutable authoritative records".
+- MD 995, I5; DOCX P1109–P1110: authenticate and validate at ingest.
+
+Counterexample:
+An external caller supplies an existing traceparent to a public service. Alternatively, a tenant-authorized producer emits another service's service.name, trace_id, parent span or agent session ID. Equality is exact and the records have valid syntax, but the claimed relationship or service attribution is not independently authenticated. Correlation treats the shared ID as authoritative and a diagnosis links an attacker-controlled successful step to a privileged failure or concludes an unrelated tool call belongs to the run. Deduplication keyed only by tenant/trace/span can also silently prefer an attacker-controlled conflicting copy.
+
+Impact:
+Evidence poisoning and misleading causality can occur inside a correctly isolated tenant. Authentication proves the ingesting principal's identity; it does not automatically prove that every resource attribute or parent/session claim in its payload is true.
+
+Protections acknowledged:
+The specification already preserves provenance, requires backend resource scope, distinguishes heuristic links and says source content is untrusted for instructions. It does not explicitly say exact equality establishes trust. This is a missing test/invariant, not proof that the chosen implementation would make that mistake. "Authoritative record" should mean retained execution history of what was observed/reported, not automatic factual truth of every producer assertion.
+
+Concrete fix:
+Track two independent properties: correlation method and attribution/trust basis. Preserve untrusted source IDs exactly while distinguishing authenticated source claims, verified mappings and unauthenticated propagated context. Bind producer write scope to allowed resource/source attribution where the deployment needs it. Qualify identities by tenant and relevant origin domain; retain conflicting copies as attributable conflicts rather than overwriting an established record. Do not globally prefix trace IDs in a way that destroys legitimate distributed tracing.
+
+Validation criterion:
+Supply a forged incoming traceparent, a service-name spoof, colliding trace/span copies from differently trusted producers, and colliding session/response IDs. Preserve original values and legitimate cross-service links, but do not upgrade those claims to trusted ancestry or allow one producer to replace another's authoritative history. Queries must expose the trust/attribution limitation.
+
+Official sources:
+- https://www.w3.org/TR/trace-context/#security-considerations — explicitly discusses forged trace-ID collisions and malicious callers.
+- https://opentelemetry.io/docs/collector/configuration/#authentication — authenticators protect the transport/connection; resource attribution requires the platform's own policy.
+- https://opentelemetry.io/docs/security/config-best-practices/ — validates the need to secure Collector inputs and sensitive handling.
+
+Finding R3-05 — Correction-aware quality aggregates need a different export contract from cumulative observations
+=============================================================================================================
+Severity: P2 medium.
+Classification: risk / metric semantics compatibility gate.
+Confidence: high (0.96).
+Gate: before exporting quality aggregates to an ordinary metrics backend or using them in alerts.
+
+Exact locations:
+- MD 651, TEST-028; DOCX P0805–P0807: "aggregate excludes superseded results under declared rules".
+- MD 836–838, A5; DOCX P0938–P0939: exports to ordinary metric engines, lineage, deferred formulas/denominators.
+- MD 916–917, D5–D6; DOCX P1025–P1030: correction history and rebuildable quality analytics.
+- MD 1049, Section 22.4; DOCX P1158: populations and scoring definitions must be declared.
+
+Counterexample:
+An exporter increments quality_pass_total and quality_evaluated_total when an evaluation first passes. Later the result is superseded by a failing corrected judgment. Canonical current-result analytics correctly reports zero passes of one eligible item, but the cumulative exported pass counter retains its increment. Incrementing a fail counter too makes the rate population two judgments rather than one current target. Rebuilding the exporter and replaying current judgments either creates a counter reset or doubles historical counts. Ordinary histogram observations have the same removal problem when a numerical score is superseded.
+
+Impact:
+The platform can satisfy canonical history/lineage tests while showing a materially different success/regression rate in normal observability dashboards and deterministic alerts. This is especially confusing after backlog replay or corrections.
+
+Protections acknowledged:
+The spec already defers aggregate formulas and supersession treatment, and does not mandate a counter. This is not a fundamental contradiction: gauges/materialized analytical views or explicitly append-only judgment event metrics can coexist. The missing constraint is that the export must declare which of these meanings it represents and be tested against the canonical corrected view.
+
+Concrete fix:
+Separate append-only operational counts of evaluation events/attempts from current-judgment quality views. For a correction-aware view, use an export representation and window/revision policy that can reflect replacement or recomputation; do not represent retractable current quality as a monotonic event counter. Publish the effective time axis (target execution versus judgment/publication time), eligibility/supersession policy and as-of/revision state. Require one logical writer per exported series and restart/rebuild behavior. Avoid per-result/version identifiers as unbounded labels.
+
+Validation criterion:
+Evaluate pass -> fail correction -> correction-of-correction, add late results, rebuild and restart the exporter, and expire records under declared policy. Canonical current-view analytics and any export claiming that meaning must agree for the same population/window/as-of. Event counters may differ only under documented event-count semantics. Include two exporter replicas to detect overlap/reset errors.
+
+Official sources:
+- https://prometheus.io/docs/concepts/metric_types/ — counters increase or reset; gauges can decrease; usual histograms count observations.
+- https://opentelemetry.io/docs/specs/otel/metrics/data-model/#single-writer — one logical writer and overlap/reset implications.
+These semantics constrain possible exports; they do not prohibit exporting quality data or require one particular backend.
+
+Finding R3-06 — Evaluator lineage does not validate evaluator quality or resistance to score manipulation
+======================================================================================================
+Severity: P2 medium.
+Classification: risk / measurement-validity gate, not an architecture contradiction.
+Confidence: high (0.91).
+Gate: before presenting model-judge scores as diagnosis accuracy, task success or regression evidence, or using them for quality alerts/promotion decisions.
+
+Exact locations:
+- MD 834–838, A5; DOCX P0937–P0939: "diagnosis accuracy, groundedness, evaluation pass rates" and canonical source records.
+- MD 828, A4; DOCX P0934: evaluator execution errors and target scores are distinct.
+- MD 1047–1049, Section 22.4; DOCX P1157–P1158: versions, attempts, compatible scoring and denominators.
+- MD 1018, Section 22.1; DOCX P1125: no uncalibrated numerical LLM confidence requirements.
+- MD 513, Section 9.3; DOCX P0505: untrusted content cannot override permissions/policies.
+
+Counterexample:
+An inaccurate answer embeds an instruction asking the judge to output the maximum score, or a verbose answer wins over a correct concise diagnosis. The judge runs successfully within its authorization scope, its rubric/model/config versions are stored, no permissions are escalated, the denominator is correct, and the score is reproducible enough to look operationally healthy. The platform still publishes an inflated "diagnosis accuracy" rate. A model or prompt change can alter this susceptibility without causing evaluator errors. Permission enforcement does not independently validate a probabilistic quality judgment.
+
+Impact:
+The platform can retain excellent provenance for a systematically invalid quality signal. This can hide regressions or reward answer manipulation; the existing no-self-reported-ground-truth rule does not address a separately attributed but unvalidated judge.
+
+Protections acknowledged:
+The spec correctly avoids treating fluent output as truth, retains evaluator attribution, keeps feedback distinct and supports deterministic/human evaluators. It also requires compatible score definitions and makes hypotheses distinct. No current requirement, acceptance test or deferred gate explicitly checks evaluator validity on representative labeled cases or adversarial answer-side instructions. This finding is not a demand for universal judge accuracy, a mandatory ensemble, or predetermined numeric thresholds.
+
+Concrete fix:
+Add a quality-signal validation gate and record its status with evaluator versions: representative tenant/task examples with independently established labels or deterministic outcomes, agreement/error/disagreement analysis, score-direction/range checks, repeatability and adversarial content/ordering tests appropriate to the evaluator. Use exploratory/unvalidated labels until a declared task-specific criterion is met. Preserve disagreement and ability to abstain or report insufficient evidence. Tie alerts/regression comparisons to validated intended use and monitor evaluator drift separately from execution health.
+
+Validation criterion:
+A test set includes correct/incorrect diagnoses, unsupported causal claims, missing evidence, irrelevant verbosity, and answer-side scoring instructions. A judge change cannot be promoted as equivalent merely because it completed successfully. The owner declares task-appropriate acceptance thresholds; the platform retains the validation dataset/version, evaluator version and measured limits. No numeric success percentage is prescribed by this review.
+
+Primary sources:
+- https://aclanthology.org/2024.emnlp-main.427/ — peer-reviewed primary study demonstrates adversarial phrases can inflate judge scores.
+- https://arxiv.org/abs/2306.05685 — original MT-Bench/Chatbot Arena study analyzes position, verbosity and self-enhancement biases and compares judges with human preferences.
+- https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge — official product guidance includes calibration against human-annotated examples; cited for operational practice, not a universal accuracy claim.
+
+Negative findings and issues deliberately not elevated
+====================================================
+1. Current GenAI conventions remain Development: the warning in A1/R20 is correct. Supported-version and migration choices are explicitly deferred; that alone is not a defect. The moved website documentation was followed to the official separate repository.
+2. No demand for unavailable chain-of-thought: A7 and Section 22.3 correctly exclude private internal reasoning as required telemetry.
+3. Runs need not equal traces; sessions can span runs/traces; links and parallel/asynchronous work are expressly preserved. I found no requirement to force a tree or silently rewrite original ancestry.
+4. No global exactly-once claim is made. At-least-once/idempotent handoff is only preferred, and ambiguous remote judge billing is explicitly acknowledged. I did not label these as newly discovered flaws.
+5. Completion, provisional targets, missing completion signals, duplicate/retry scope, crash between persistence and enqueue, late targets, cancellation and authority rechecks are already covered as lifecycle gates. I did not restate "choose a queue/job state machine" as a defect. R3-03 adds a particular input-consistency invariant those mechanisms must preserve.
+6. Evaluation failures, missing evidence and target failures remain distinct; asynchronous workers cannot block core telemetry. Self-observability and recursion exclusions are already required. No invented new fifth plane is necessary.
+7. Quality selection bias, populations, denominators, missing/skipped/failed cases and evaluator/agent version comparison are explicitly acknowledged. Their not-yet-selected formulas are not findings. R3-05 and R3-06 identify additional semantic/validity cases.
+8. Required deletion is already an exception to immutable history; removal must propagate and replay must not resurrect it. I did not claim that immutability prohibits privacy deletion.
+9. OTLP partial success is correctly distinguished from whole-batch retry. Durable, accepted, queryable and processed are distinct. Recovery obligations include late data, replay and stage integrity, so queue-empty is not being represented as completion.
+10. Engine selection, payload storage placement, authZ engine, default content capture, exact schemas, clocks, numerical SLOs and prototype results are intentionally unresolved. This review does not select them or demand their premature approval.
+11. W3C trace/span sizes, lowercase hex identity and source service-name ambiguity guidance are reasonable. R3-04 concerns trust in values, not their width or serialization.
+12. I found no demonstrated inconsistency between Rust preference, retained Go infrastructure, Python workers and the required Rust/Go comparison. I did not independently review language performance claims in depth.
+13. Current Langfuse documentation now emphasizes observation-level evaluation and marks legacy trace-level evaluators deprecated around its v4 transition. The architecture may still implement run/session evaluation itself; its use of vendor references does not import that vendor's current API limits. I did not treat a product's evolving capability as a prohibition on this platform's chosen logical records.
+
+Search and source record
+========================
+Search themes executed independently:
+- "OpenTelemetry GenAI agent spans evaluation event conventions" and official moved GenAI URLs.
+- OTel schemas/schema_url, instrumentation provenance, span finalization and log TraceId/SpanId/EventName behavior.
+- OTel/Prometheus metric types, cumulative temporality and single-writer overlap.
+- W3C trace-context security and malicious collisions.
+- Official Collector authentication/configuration/security guidance.
+- Official Langfuse judge execution, retries/input mapping and session evaluation.
+- Primary research on judge bias/calibration and adversarial scoring.
+- OpenFGA parent-child permissions, OPA data filtering and explicitly governed materialized-view disclosure.
+
+Official/primary pages actually consulted (in addition to per-finding citations):
+- https://opentelemetry.io/docs/specs/semconv/gen-ai/
+- https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/
+- https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/4181b1ebe55da7edb3538636c45ae64af369b5ef/docs/gen-ai/gen-ai-agent-spans.md
+- https://api.github.com/repos/open-telemetry/semantic-conventions-genai/commits/main
+- https://opentelemetry.io/docs/specs/otel/trace/api/
+- https://opentelemetry.io/docs/specs/otel/resource/sdk/
+- https://opentelemetry.io/docs/specs/otel/logs/sdk/
+- https://opentelemetry.io/docs/specs/otel/compatibility/logging_trace_context/
+- https://opentelemetry.io/docs/concepts/sampling/
+- https://langfuse.com/resources/engineering/evaluating-sessions-conversations
+
+Search results also exposed newer judge papers; no numerical or safety claims from those unexamined papers are relied on. One attempted OpenFGA link click failed; direct official parent-child documentation was successfully retrieved and is sufficient for the modest claim cited. I stopped source searching when each retained external claim had an official/primary basis.
+
+Limits
+======
+This is a specification review, not a runtime penetration test, performance benchmark or implemented-system audit. Failure counterexamples are reasoned constructions; none is claimed as an observed exploit in software. Proposed fixes are independent reviewer recommendations, not previously approved project decisions. R3-02 is conditional on supporting the relevant GenAI version/event mode. R3-03 and R3-05 tighten already acknowledged implementation gates. R3-06 adds a measurement-quality gate rather than invalidating all LLM evaluation. Common authorization, provenance and privacy provisions may allow a competent implementation to avoid these failures; the findings identify where the maintained contract should make that avoidance explicit and testable.
+
+END OF FROZEN INDEPENDENT REPORT 3

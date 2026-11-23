@@ -1,0 +1,30 @@
+{
+  "review_date": "2026-11-22 America/Toronto",
+  "reviewer_independence": "Three isolated contexts, same underlying model family; independent web research; frozen reports before cross-review",
+  "reports": [
+    {
+      "report": "reviewer-1-independent.txt",
+      "bytes": 22106,
+      "sha256": "f985cc44355d7f447d979d925fe52fb11741e0df8dd72eb468b32f5c1185e13c",
+      "freeze_confirmed_by_reviewer": true
+    },
+    {
+      "report": "reviewer-2-independent.txt",
+      "bytes": 32988,
+      "sha256": "38777a3d4c4c75205a4de012055428e9d72d89fad854d1f7d60ce794c4f36536",
+      "freeze_confirmed_by_reviewer": true
+    },
+    {
+      "report": "reviewer-3-independent.txt",
+      "bytes": 33124,
+      "sha256": "c4b24ed9ba4226e990e71634b3a28c7e457ed46456fa624ecd069bb4fe745bea",
+      "freeze_confirmed_by_reviewer": true
+    }
+  ],
+  "final_severity_counts": {
+    "P1": 1,
+    "P2": 10,
+    "P3": 3
+  },
+  "spec_modified": false
+}

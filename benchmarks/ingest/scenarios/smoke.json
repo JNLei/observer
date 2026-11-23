@@ -1,0 +1,16 @@
+{
+  "workers": 4,
+  "queue_capacity": 8,
+  "generator_workers": 8,
+  "generator_queue_capacity": 32,
+  "server_timeout_ms": 250,
+  "client_timeout_ms": 1000,
+  "payload_bytes": 128,
+  "max_payload_bytes": 65536,
+  "phases": [
+    {"name": "steady", "duration_seconds": 0.5, "rate_per_second": 20},
+    {"name": "burst", "duration_seconds": 0.25, "rate_per_second": 80},
+    {"name": "disconnect", "duration_seconds": 0.5, "rate_per_second": 20, "sink_mode": "disconnect"},
+    {"name": "reconnect", "duration_seconds": 0.5, "rate_per_second": 20}
+  ]
+}

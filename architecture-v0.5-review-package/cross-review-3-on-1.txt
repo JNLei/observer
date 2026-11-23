@@ -1,0 +1,75 @@
+CROSS-REVIEW 3 ON INDEPENDENT REVIEWER 1
+2026-11-22 — independent reports preserved unchanged
+
+I read outputs/reviewer-1-independent.txt after the parent explicitly opened cross-review. This challenges the findings as architecture-specification findings, not the well-supported underlying runtime/measurement mechanisms. No new implementation was supplied, and none of these failures has been demonstrated in this project's software.
+
+Overall disposition
+===================
+Accept the substance of all five as concrete conformance or benchmark refinements. Reject characterizing any as a demonstrated architecture defect or unresolved fundamental contradiction. Reviewer 1 already largely makes this distinction correctly. I recommend downgrading the two P1 findings to P2 in the consolidated report, and treating R1-05 primarily as a P3 measurement clarification unless a process-RSS-only acceptance method is actually proposed. The existing specification already binds implementations to bounded resources, counter semantics, protected ingestion, equal quotas and declared workload profiles. These findings supply good adversarial fixtures for proving those promises; they do not show the promises conflict.
+
+R1-01 — Cancelled work and budget accounting
+===========================================
+Disposition: ACCEPT mechanism and validation; DOWNGRADE P1 -> P2 at specification stage.
+
+Concrete counterexample is strong. A response timeout is not proof that local blocking work or a remote query stopped. Releasing a permit on API completion can hide actual concurrency. The cited Tokio/gRPC behavior is appropriately conditional, and the proposed orphan-work accounting is useful.
+
+Already covered in principle: MD 1016 requires cost/concurrency budgets, cancellation/deadlines; MD 1037 and 1066 protect critical resources; MD 1095 requires bounded nonblocking/runtime behavior. An implementation that permits unbounded continuing scans already violates those principles. The new requirement is to test actual work termination/accounting rather than just response latency. Without selected execution code or a demonstrated unsafe permit lifecycle, P1 overstates the present specification gap.
+
+Fix caveat: "Keep permits until termination" cannot be the only policy. A permanently stuck remote request could consume every permit forever; its actual termination may be unobservable. Accept bounded orphan/quarantine accounting, isolation or server-enforced maximum runtime as alternatives, with explicit uncertainty and controlled failover. A client timeout must not itself trigger unbounded replacement work, but restoring a bounded service after a backend is proven unreachable must remain possible. Do not turn every cancellation into a requirement to kill a shared process.
+
+Recommended consolidated wording: Add a cancellation storm fixture that bounds actual residual local/remote work and verifies that retries cannot bypass resource accounting; select the permitted orphan policy with the relevant adapter.
+
+R1-02 — Stateful metric conversion during recovery
+==================================================
+Disposition: ACCEPT conditional correctness case; DOWNGRADE P1 -> P2.
+
+The delta-to-cumulative example is technically concrete. Stateful transformation ownership can fail while transport counts reconcile. Both metric timestamps, stream identity, reset epochs and worker ownership are relevant. This is more than a request to pick a storage engine.
+
+Already covered in principle: MD 354 explicitly preserves counter/window semantics; MD 1091 enables fresh/backlog reordering only when downstream semantics support it; MD 1108 explicitly demands value/relationship checks beyond record counts. The converter example should become a specific fixture under those existing requirements. It is not evidence that the selected architecture currently contains two stateless converter writers.
+
+Conditional applicability is essential: only apply conversion-state tests where normalization/adaptation performs stateful conversion or aggregation. Native delta storage, stateless pass-through and other signal paths should not inherit a persistent-accumulator requirement. A declared discontinuity/reset or attributable rejection can be correct under the chosen delivery policy; do not demand byte-identical cumulative sequences across all restart strategies. Exact counter/histogram semantics and rate intervals are the right comparison. Stateful sampling and enrichment can be separately assessed when selected, without making this test universal.
+
+Recommended consolidated wording: Require a stateful-transform inventory and golden-value recovery fixtures for any selected converter, preserving declared reset/loss semantics and writer ownership.
+
+R1-03 — Admission before expensive decoding
+===========================================
+Disposition: ACCEPT P2 as a concrete admission test refinement.
+
+The multiply concurrent decompression/materialization example identifies a real placement pitfall not made explicit by "bounded queues." The spec's memory and payload obligations logically apply to it already, but an implementation could easily validate only the postdecode boundary. This is a worthwhile explicit fixture for the representative vertical slice.
+
+Preserve the report's careful scope: preauthentication global limits protect work that occurs before tenant identity is available; tenant budgets begin when reliable authenticated identity can be derived. Do not require authorization from telemetry payload attributes before parsing, or require full semantic redaction before a bounded in-memory decoder can inspect the record. I5 requires security before durable persistence, not a physically impossible prohibition on temporary in-memory inspection. A transport's valid compressed input may still be rejected under a declared decoded/structural budget. Avoid assuming a universal compression ratio or that one library's size setting covers JSON nesting, copies and simultaneous requests.
+
+Recommended consolidated wording: Bound connections/body reads, concurrent decoding and aggregate decoded expansion before admitting expensive work; verify every enabled adapter with burst/compression/structure tests.
+
+R1-04 — Coordinated omission and load-generation semantics
+=========================================================
+Disposition: ACCEPT P2 as a benchmark-validity refinement, not a defect in the chosen architecture.
+
+Offered rates and predeclared workload profiles already appear at MD 1127–1131, so "workload not declared" would be a false positive. The narrower missing detail is how scheduled demand, client waiting, dropped requests and censored/failed observations affect the verdict. The known-stall fixture directly tests that and is useful before language/storage comparisons.
+
+Do not mandate an open arrival process for all profiles. Closed-loop populations are legitimate when they model actual users/concurrency, and response-paced demand can be the intended workload. Likewise, a fixed-concurrency diagnostic can legitimately report completed-request service latency. The report properly asks to declare and justify the model; preserve that qualification. An arrival-driven SLO must not silently use a response-paced generator, and unsent/time-out work cannot disappear from success accounting. Reporting completed latency, intended-arrival latency, rejected/unsent counts and timeout/censoring policy separately is clearer than assigning every failed observation an invented latency.
+
+Recommended consolidated wording: Declare arrival model and loss/censoring accounting; validate the generator with a known stall and publish scheduled/sent/completed/failed demand as appropriate.
+
+R1-05 — Deployment memory versus process RSS
+============================================
+Disposition: ACCEPT measurement advice; DOWNGRADE P2 -> P3 clarity improvement by default. Retain P2 only if the benchmark actually proposes process RSS as its sole memory/cost or no-OOM gate.
+
+Linux cgroup accounting and reclaim/writeback coupling are technically sound and relevant to WAL replay. However MD 1127 already says "RSS/peak memory" plus disk/network I/O, MD 1149 requires resource quotas and matched background workloads, and the specification already requires bounded resources and no unexplained failure. "Peak memory" is not explicitly limited to process RSS. The report acknowledges this ambiguity. Consequently it is weaker as a separate medium-severity defect than as an instruction for implementing the memory measurement plan.
+
+Keep platform applicability explicit. Cgroup v2 counters are appropriate for selected Linux-container scenarios; other supported targets need equivalent deployment/system measurements. Do not force a cgroup-v2 dependency into local macOS, bare-metal or non-Linux operation. Shared storage dependencies need a declared measurement/allocation scope, avoiding double counting or charging an unrelated entire shared cluster to one language variant. Page-cache warmth, throttled disks and OOM/pressure events should be reported under equal configured resource limits.
+
+Recommended consolidated wording: Define peak-memory scope and include platform-level charged memory/pressure for container profiles, alongside RSS and allocator metrics. Add a constrained-disk/compaction case when those components are in the selected slice.
+
+Rejected interpretations and unsupported escalation
+==================================================
+- Reject "the architecture cannot enforce bounded execution because Tokio cannot abort spawn_blocking." Bounded isolated/cooperative execution and orphan quotas remain valid designs.
+- Reject "replay requires a globally ordered queue or persistent converter state for every adapter." Per-stream semantics and chosen stateful transformations determine requirements.
+- Reject "authorization/redaction must happen before any bytes are decoded." Global admission can precede decode; full content policy inspection generally cannot.
+- Reject "closed-loop benchmarks are inherently invalid." They are invalid only when their effective demand/accounting does not support the stated workload claim.
+- Reject "RSS/peak memory mandates RSS-only measurement" or "all deployments require Linux cgroup v2." Neither is in the spec.
+- Reject using hypothetical maximum downstream impact alone to present these as already-existing P1 implementation failures. All findings remain conditional gates until concrete code/configuration supports stronger severity.
+
+Recommended summary to parent
+=============================
+Retain all five technical cases, primarily as an acceptance-fixture checklist appended to the existing implementation gates. Consolidated severity suggestion: R1-01 P2; R1-02 P2 conditional; R1-03 P2; R1-04 P2; R1-05 P3 unless RSS-only gating is proposed. No underlying technical mechanism is rejected. No source choice, language reversal, fixed threshold or architecture replacement follows from these cases.

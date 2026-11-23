@@ -1,0 +1,18 @@
+AI-Native Observability Architecture Spec v0.5 — Source parity audit
+Review date: 2026-11-22 (America/Toronto)
+
+Inputs retrieved from the two attachments on the referenced ChatGPT conversation. No input was edited.
+Markdown SHA-256: 80bb702a1f29349e76b4f1a41962d5e121ab97509bdf20639ea295712054f2a9
+DOCX SHA-256: 7052a805eea119f1ba8765b6895803a6b88cb237f1296b2d52d2873b46094014
+
+Result: NO substantive content mismatch found.
+Markdown has 1,218 lines. DOCX body contains 23 tables and 1,323 nonempty paragraphs out of 1,346 body paragraphs (paragraph IDs count all body paragraphs, including empty paragraphs, in document order).
+After removing Markdown syntax, table separators, list markers, and substituting hyperlink labels for Markdown links, the complete ordered body text matches exactly: 14,264 whitespace-delimited tokens in each file, no differences.
+All 34 distinct source URL targets, including the conversation reference, are represented in the DOCX external hyperlink relationships, with no missing or extra target.
+No tracked insertions or deletions were found in document.xml; no comments part is present.
+
+Presentation differences: Markdown syntax becomes Word styles, tables, bullets, and hyperlinks. Markdown's repeated "1." list markers render as sequential numbered lists in Word; that is expected Markdown behavior, not a requirement mismatch. Word source link URLs may be behind link labels rather than visibly printed.
+
+The bundled LibreOffice renderer produced 34 pages. Contact sheets of all 34 pages were inspected for gross omissions and layout problems, with full-size checks of pages 5, 10, 26, and 30. This was a technical content review, not an exhaustive typography/accessibility certification. Rendered page citations refer to this rendering; Word pagination can vary by renderer/font environment. A previous conversation's description of a 30-page document is not the page count of this render and is not a Markdown/DOCX content mismatch.
+
+Limits: Exact comparison covers body text, table text, and hyperlink targets, not semantic validation of every external source or all OOXML formatting. Both formats can contain the same design defect; parity does not establish correctness.

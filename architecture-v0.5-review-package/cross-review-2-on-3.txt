@@ -1,0 +1,62 @@
+CROSS-REVIEW 2 ON INDEPENDENT REVIEW 3
+Frozen independent reports unchanged. Cross-review date: 2026-11-22.
+
+Overall conclusion
+Reviewer 3's core assessment is sound: no P0 and no demonstrated fundamental architecture contradiction. R3-01 and R3-04 identify substantive missing security composition/trust distinctions. R3-05 and R3-06 are useful narrowly scoped validation additions. R3-02 overstates what the current flow excludes; R3-03 needs a less prescriptive fix that respects the explicitly permitted mutable-query/retention policies. None warrants reopening the approved four planes or choosing engines now.
+
+Disposition summary
+- R3-01: ACCEPT P1, with explicit declassification/aggregate exception retained.
+- R3-02: DOWNGRADE to P3 compatibility clarification/checklist for this specification. REJECT the assertion that v0.5 selects a span-only projection architecture. A supported event mode silently lost by an implementation would become a P2 defect.
+- R3-03: ACCEPT P2 only as an attempt-lineage validation gate; DOWNGRADE the demand for universal exact evidence manifests/reproducibility to a policy option.
+- R3-04: ACCEPT P2 baseline; P1 is justified where claimed service-level producer isolation or authoritative completion can be defeated.
+- R3-05: ACCEPT P2 export-semantics gate. Existing approved aggregate rules already prohibit misleading superseded-result counts; do not present this as a new contradiction.
+- R3-06: ACCEPT P2 measurement-validity gate for claims/decisions relying on judge quality, with scope limits below. Not a prerequisite for accepting every external score or storing experimental judgments.
+
+R3-01 — Derived disclosure
+The counterexample remains valid despite A6/A7's broad privacy intentions: the actor can be authorized to read inputs and publish a new object while the new object's audience is broader. Source-handle reauthorization cannot protect copied facts. This is independently consistent with my own frozen R2-01.
+
+The proposed fix is unusually careful and should be preserved: it does not require every reader of a deliberately sanitized aggregate to possess every original ACL. Keep “explicit policy permits derived disclosure” as the normative outcome; inherited ACLs, read-time source checks and declassification are possible mechanisms. A blanket minimum-source-ACL/intersection algorithm could break legitimate shared incident reports and aggregate analytics, so do not mandate that algorithm. Also avoid implying that every historical report must disappear solely because its source retention expired: retention/deletion policy and authorized declassification can legitimately permit a retained report, while an actual confidentiality restriction must still be respected. Revocation semantics should be explicitly scoped to source-dependent artifacts versus separately authorized derived publications.
+
+R3-02 — GenAI log-event compatibility
+The externally documented event shape is useful evidence for compatibility planning. The claimed architecture exclusion is not established by the cited text:
+- MD 998 says canonical traces “additionally feed” projections; it does not say traces are the exclusive input.
+- I1 supports logs and compatible GenAI instrumentation.
+- I3 says projections derive from “canonical execution,” a broader logical concept than a mandatory span-only physical source.
+- A1 explicitly defers supported convention versions and normalization mappings; MD 1006 separately defers the SDK compatibility matrix and requires published adapter capabilities.
+- A3/A4 explicitly support external systems and evaluation APIs but do not promise automatic promotion of every OTLP score event into canonical evaluation results.
+Thus accepted raw log storage plus no automatic score import can be a legitimate, documented release capability. It is not necessarily “lost external scores” or a failure of a promise that has not been made. Unsupported promotion is also not the same as rejecting the log at OTLP admission; raw retention can remain fully standards-compatible.
+
+Recommended treatment: P3 wording/test refinement now. Add selected event modes to the compatibility matrix and test their declared disposition. If a release explicitly claims a convention/event mode participates in the AI/evaluation model, failure to associate it is P2. The proposed “promote/link, raw-only with limitation, or reject unsupported shape” alternatives are sensible. Do not require promotion of every accepted event, reinterpret raw-ingest success as projection success, or make upstream Development conventions a locked public schema. The report's own conditional caveat should appear in the headline and executive summary, not only the body.
+
+R3-03 — Evidence actually evaluated
+The retry counterexample is a useful failure fixture. Same target/run ID plus a query fingerprint does not prove equal judge inputs. Retaining attempt-to-input/result attribution is valuable and fits MD 1047's existing requirement to record permitted supporting evidence.
+
+However, the specification already explicitly permits mutable query references (MD 467–473), warns results can change, defers snapshot/query policy (MD 933), and requires late-data revisions and auditable attempts (MD 927–935). It therefore does not promise universal reproducibility or a globally consistent cross-store cut. A system may legitimately evaluate the current evidence for a fixed run on each attempt and record that difference. Same target version need not imply same source-query result unless the target's contract explicitly defines a frozen evidence set.
+
+The fix “exact source record/revision identities” for every attempt can be impractical for aggregate metrics or queries over very large populations, can require stable record IDs that selected native engines do not offer, and may defeat bounded retrieval/privacy policies. It also cannot guarantee later resolution after permitted deletion. Recommend an invariant that each result identifies its winning attempt and declared input identity/reproducibility mode. Where permitted, record the exact bounded judge-input payload or digest, per-source resolution/version/coverage/transform metadata, and source references. Mark mutable/unretained inputs and irreproducibility explicitly. A full source manifest or snapshot is one option; do not require it for every query or retain prohibited content to create it.
+
+P2 applies before fixed-input/reproducible evaluation claims or retry-idempotency semantics are committed. Otherwise this is refinement of the existing lifecycle/evidence gate, not an architecture blocker. Keep the test's “cannot masquerade as the same FIXED evidence revision” qualifier. Allow different input sets under the same run target when distinct attempts clearly say so; do not force artificial execution revisions when only an external context/query result changes.
+
+R3-04 — Correlation trust
+Accept. Exact trace-ID matching does not authenticate service attribution or ancestry, and the report fairly acknowledges that the specification does not explicitly make that inference. This overlaps substantively with my frozen R2-02. The proposed two dimensions—method and trust basis—are preferable to weakening legitimate distributed-trace correlation or replacing original IDs.
+
+Severity depends on claimed isolation. P2 is defensible where all tenant writers are deliberately equally trusted and records remain source-attributed claims. P1 is appropriate if a lower-trust writer can finalize/overwrite another service's protected execution or alter ACL-relevant session/run membership. Preserve the caution not to globally rewrite/prefix propagated trace IDs. Tenant/origin qualification belongs in internal keys/mappings, with legitimate cross-service joins preserved. Merely having two producers in one trace is not a collision requiring quarantine.
+
+R3-05 — Correction-safe metric export
+Accept P2 as a concrete integration test for the already deferred aggregate/export rules. A5 does not require counters, and TEST-028 already requires superseded-result treatment under declared rules. The supplied bad exporter would violate its intended current-view semantics; the finding adds a practical way to test the constraint, not proof that current approved requirements conflict.
+
+Keep both valid meanings: append-only counts of judgments/attempts and current-best-judgment quality. A counter named/documented as the former may legitimately increase for successive judgments; it must not be judged against a current-target denominator. Conversely, adding a fail after a superseded pass cannot repair a current-target success counter.
+
+Important fix limitation: a decreasing gauge changes present state; it does not retroactively rewrite historical samples already scraped by an ordinary metrics store. Specify target-time versus judgment-time and correction/as-of semantics. Compare canonical and exported values only for the same declared population, window, revision/as-of and allowed publication lag. Do not require an ordinary metrics engine to reconstruct corrected historical truth it does not support. Historical analytical views can remain canonical, with an explicitly labeled current or publication-time metric export. “One logical writer” does not require one physical process; safe partitioned/HA execution can produce one logical series stream.
+
+R3-06 — Judge validity
+Accept as a P2 quality-signal validation gate when the product presents judge output as diagnosis accuracy or uses an asserted calibration/equivalence to justify regression decisions. A successful evaluator execution and perfect provenance do not establish that the judge measures the intended construct; answer-side score manipulation is separate from permission escalation. Section 9.3's authorization boundary does not solve measurement bias.
+
+Scope must remain narrow. The platform intentionally accepts human feedback, external systems and experimental scores. It must remain possible to ingest, retain, compare and display an explicitly attributed/unvalidated judgment before it passes a platform certification process. Not every tenant has reliable labeled root-cause data, and deterministic labels can themselves be wrong or cover only part of the task. Validation should be tied to intended use and available evidence, retain uncertainty, and permit customer-owned criteria. Avoid a mandatory universal human-labeled dataset, ensemble, numeric accuracy threshold, or approval process before ordinary evaluation APIs work. A report labeled “Judge X pass rate” is not automatically a claim of objective diagnosis accuracy.
+
+Recommended wording: require a declared validation status, intended use and limitations for built-in/recommended evaluator configurations; require task-specific evidence before making calibration/accuracy claims. Preserve versioned rubrics, test artifacts and disagreement/abstention. Promotion gates for customer-owned evaluators/alerts should be configurable under the shared management model, rather than silently adding a vendor certification dependency to headless OSS.
+
+Cross-review limits
+This review challenges the frozen report against the supplied specification and its own cited evidence. I did not rerun an exhaustive external-source audit, inspect an implementation, or edit any independent report. No source invalidity was demonstrated. Decisions above distinguish plausible failures in a future implementation from contradictions in v0.5. Further external research is unnecessary for these disposition judgments.
+
+END CROSS-REVIEW 2 ON 3

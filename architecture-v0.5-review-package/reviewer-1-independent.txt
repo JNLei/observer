@@ -1,0 +1,123 @@
+INDEPENDENT REVIEWER 1 — AI-Native Observability Architecture Spec v0.5
+Scope: high-performance telemetry, backpressure, outage replay, correctness, Rust/Go validation and resource isolation.
+Review date: 2026-11-22 (environment date); current official documentation was independently searched and opened during this review.
+
+ASSESSMENT
+No P0 finding and no demonstrated fundamental contradiction in the four-plane architecture. No evidence justifies reversing the Rust preference. The most useful changes are targeted implementation and acceptance gates: end-to-end cancellation accounting, stateful metric conversion during replay, admission before expensive decoding, unbiased load generation, and deployment-level memory accounting.
+
+There are five findings: two P1 risks and three P2 risks. They are conditional failure modes supported by the specification and current primary documentation, not claims that nonexistent implementation code already contains bugs. All are implementation/benchmark gates; none requires changing the selected planes, choosing a storage product, fixing numeric SLOs now, or reopening every deferred decision. Severity expresses the impact if the named implementation is allowed through the gate, not proof of a present production incident.
+
+INDEPENDENCE AND INPUTS
+I did not retrieve any conversation, consult another reviewer, read another reviewer output, or modify the specification. I read all 1,218 Markdown lines using the supplied numbered extract and checked it against the original Markdown. I directly opened the original DOCX ZIP/XML with the Python standard library and compared its body paragraphs against docx-paragraphs.txt. All 1,323 nonempty paragraphs match that extract exactly. After normalization of Markdown links, emphasis, headings, bullets and table cells, all 1,323 meaningful Markdown units have corresponding DOCX text; zero unmatched units. I additionally inspected the corresponding DOCX paragraphs around the findings. This establishes text correspondence, not visual layout equivalence.
+
+Input SHA-256:
+spec-v0.5.md: 80bb702a1f29349e76b4f1a41962d5e121ab97509bdf20639ea295712054f2a9
+spec-v0.5.docx: 7052a805eea119f1ba8765b6895803a6b88cb237f1296b2d52d2873b46094014
+markdown-numbered.txt: 8be62737cc052fae7ab551a6d71317168ffd10b91493a47d4925a42507979e25
+docx-paragraphs.txt: 85e5c533b676bd8dfe85b5fe05e3447a61e9022c8c71807cb706a7a579eff3f9
+
+FINDING R1-01 — P1 HIGH — Keep cancelled-but-running work charged to resource budgets
+Classification: risk; implementation gate, not architectural contradiction.
+Confidence: high in runtime/protocol behavior; medium-high that the spec needs an explicit acceptance condition.
+Location: §22.1, MD 1016 / DOCX P1124; §23.2, MD 1095 / P1209; §22.5, MD 1066 / P1175–P1176.
+Spec quote: “Enforce time/result/byte/cost/concurrency budgets, cancellation, deadlines and pagination.”
+Existing protection: the spec already mandates cancellation, bounded execution, CPU/I/O separation, and protected ingest resources. The missing precision is when a cancelled operation relinquishes its budget and how completion of actual work is established.
+Failure counterexample: a query has one concurrency permit. It starts a CPU-heavy blocking task or remote scan and times out after one second. The API returns a timeout and releases the permit, but the scan continues for a minute. Repeating this creates dozens of running scans while the gateway reports one admitted query. The same error occurs when a retry gets a new permit while the previous timed-out backend request is still running. A bounded async semaphore and prompt timeout response do not bound this resource use.
+Primary evidence: Tokio documents that started spawn_blocking work cannot be aborted; timeout also cannot preempt a future that does not yield. gRPC makes stopping spawned application work the server's responsibility. These observations support the counterexample; they do not establish that every backend lacks cancellation.
+Official sources:
+https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html
+https://docs.rs/tokio/latest/tokio/time/fn.timeout.html
+https://grpc.io/docs/guides/cancellation/
+https://grpc.io/docs/guides/deadlines/
+Impact: cancellation/retry storms bypass apparent tenant concurrency and CPU budgets, exhausting query capacity or shared storage resources and violating the protected-ingest/alert objective.
+Concrete fix: define lifecycle states for requested cancellation, actual termination, and noncancellable outstanding work. Keep permits and actual resource usage charged until termination or a separately bounded orphan-work quota applies. Propagate the remaining deadline through every hop; cap fan-out and blocking-pool queues. Require cooperative cancellation for CPU loops, backend kill/timeout enforcement, or an isolated bounded executor/process for noncooperative work. The mechanism remains a deferred implementation choice.
+Validation: use an intentionally noncooperative blocking task and a backend scan that ignores connection close. Repeated timeouts, disconnects and retries must leave actual running work within the configured bound; record cancellation-to-stop latency and orphan work; maintain declared fresh ingest and alert SLOs. Checking only HTTP/gRPC response time is insufficient.
+
+FINDING R1-02 — P1 HIGH — Replay correctness must include stateful metric transformations, not only records
+Classification: risk; conditional adapter/normalization gate.
+Confidence: high for the standards requirement; medium-high for this additional explicit test obligation.
+Location: §7.2, MD 354 / DOCX P0384; §21, MD 991–1006 / P1096–P1119 (particularly MD 1006 / P1119); §23.2, MD 1083–1093 / P1190–P1208; §23.3, MD 1108 / P1228.
+Spec quote: “Preserve metric resolution, aggregation window, rollup/downsampling and counter semantics.”
+Existing protection: counter semantics, signal-specific ordering, duplicate policy, value checks, and source identity are already required. I am not alleging that generic parallel replay is unconditionally enabled or that per-adapter ordering is unrecognized. The narrower gap is that queue recovery is not the same as recovery of a stateful transformation's ownership and state.
+Failure counterexample: an OTLP delta stream is converted to cumulative values by two statelessly load-balanced replay workers. Each accumulates different intervals and emits a series under the same identity. A processor restart or live/backlog split can likewise lose the accumulator or put older intervals behind a new accumulation epoch. Every source record can remain durable and the counts can reconcile while the output counter is wrong.
+Primary evidence: the OTel data model requires one logical writer and identifies delta-to-cumulative conversion as stateful. The official Collector processor accumulates samples in memory. This makes state ownership an adapter correctness issue rather than a language-speed question.
+Official sources:
+https://opentelemetry.io/docs/specs/otel/metrics/data-model/#single-writer
+https://opentelemetry.io/docs/specs/otel/metrics/data-model/#sums-delta-to-cumulative
+https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-contrib/main/processor/deltatocumulativeprocessor/README.md
+Concrete fix: before enabling such a path, record its state key, writer/partition ownership, reset epoch, failover behavior, and durability/rebuild boundary. Preserve the full stream identity and both metric timestamps through normalization. Choose native delta storage, semantics-preserving serialized conversion, or another documented strategy. Do not impose persistent accumulators on adapters that do not need them.
+Impact: plausible but false rates, request counts and histogram totals; wrong SLO/alert results even with no unexplained transport loss.
+Validation: a golden stream containing known deltas must produce declared-equivalent sums/rates and histogram counts after duplicate delivery, mixed live/backlog routing, crash, ownership transfer and resharding. Explicit reset/disposition is acceptable where declared; silent value corruption is not. Include writer identity collisions. Run this in both language variants when their adapters perform the conversion.
+
+FINDING R1-03 — P2 MEDIUM — Bound expensive ingress work before the admitted-record queue
+Classification: risk; protocol/admission implementation gate.
+Confidence: high in the resource model; medium in textual gap because general bounded-memory requirements already apply.
+Location: §21 I5, MD 995 / DOCX P1108–P1110; §23.2, MD 1085 and 1095 / P1196–P1198 and P1209; §24.2, MD 1147 / P1250.
+Spec quote: “bound memory/queues and avoid retry storms” (MD 1085).
+Existing protection: I5 requires authentication/validation/privacy before persistence; REC-04 bounds memory and in-flight work; payload limits are already recognized as deferred. This finding adds enforcement placement and multiplicative accounting, not an arbitrary numeric limit.
+Failure counterexample: ingress limits the postdecode queue to 100 batches, but the transport concurrently decompresses and materializes 200 large OTLP requests before acquiring queue or tenant permits. Even with a finite per-message limit, total decoded allocation, parser objects and copies exceed the memory budget before REC-04 can backpressure the write path. A byte-small compressed request can require much more decoded memory. An adapter with different defaults becomes a bypass.
+Primary evidence: Tonic explicitly provides a decoded-message limit; grpc-go's receive path separately checks decompressed size. Their controls demonstrate that wire bytes and decoded bytes are distinct resource surfaces. They are examples, not selected dependencies or proof their defaults are unsafe.
+Official sources:
+https://docs.rs/tonic/latest/tonic/server/struct.Grpc.html#method.max_decoding_message_size
+https://github.com/grpc/grpc-go/blob/master/rpc_util.go
+Impact: a burst or noisy tenant can cause memory exhaustion or parse CPU starvation despite bounded write queues, jeopardizing every signal sharing that admission process.
+Concrete fix: require global/preauthentication connection and body budgets; authenticated tenant admission as early as headers allow; compressed and decompressed byte limits; structural limits on elements/attributes/nesting and decoded expansion; bounded concurrent decodes; and accounting for copies, redaction, batch construction and fan-out. Reserve capacity before expensive work where possible and reject without persisting prohibited payloads.
+Validation: send concurrent maximally sized legal messages, highly compressible inputs, many-small-element protobuf/JSON payloads, slow bodies and unauthorized floods through every enabled adapter. Demonstrate bounded peak allocation/RSS and parse concurrency before admission, explicit rejection behavior, and healthy peer progress. A test that fills only an already-decoded queue does not exercise this failure mode.
+
+FINDING R1-04 — P2 MEDIUM — Predeclare offered arrival processes and include omitted work in latency verdicts
+Classification: risk; benchmark-validity gate, not a recommendation to select one load tool.
+Confidence: high.
+Location: §23.6, MD 1127–1131 / DOCX P1240–P1242; §24.2, MD 1151–1155 / P1252–P1254; §5.2, MD 284–286.
+Spec quote: “Report distributions, run-to-run variability, errors and raw configuration/results.”
+Existing protection: offered/admitted rates, mixed workload, repeat trials, query tails and predeclared profiles are already excellent requirements. They do not explicitly say whether offered work is scheduled independently of the response rate or how client-side wait, dropped iterations and timeouts enter the reported distribution.
+Failure counterexample: a fixed-concurrency generator waits for every response before scheduling the next query. The system stalls under replay, so the generator submits fewer queries exactly when contention is greatest. P99 of completed responses and memory stabilize, producing a favorable language/isolation result for a reduced effective query load. Another generator maintains the intended schedule but drops unsent requests and excludes them from latency. Equal configurations can therefore still hide demand.
+Primary evidence: Grafana k6's own documentation describes closed models reducing arrival rate during slow responses and identifies coordinated omission. Its arrival executors can also drop iterations when generator capacity is insufficient.
+Official sources:
+https://grafana.com/docs/k6/latest/using-k6/scenarios/concepts/open-vs-closed/
+https://grafana.com/docs/k6/latest/using-k6/scenarios/concepts/dropped-iterations/
+Impact: the required Rust/Go or mature-engine comparison can pass its declared tail/freshness intent without sustaining the intended contention. This is a harness flaw, not evidence that either language is slower.
+Concrete fix: predeclare open or closed workload semantics and justify them against the workload. For arrival-driven profiles, schedule independently of completions, preserve intended send timestamps, and publish scheduled/sent/completed/rejected/timed-out/unsent counts. Include client queueing in user-visible latency; keep service time separate. Predeclare how timeouts and generator overload affect pass/fail. Resource-size or separately host the generator so it is not the bottleneck.
+Validation: inject a known multi-second server stall. The report must expose the full scheduled demand and stall impact rather than merely reducing request rate or omitting unsent/time-out observations. Validate this before using the benchmark to settle language or storage gates.
+
+FINDING R1-05 — P2 MEDIUM — Measure the deployment's memory and I/O pressure in addition to RSS
+Classification: risk; measurement/isolation gate for containerized Linux deployments.
+Confidence: high on operating-system behavior; medium on gap because “peak memory” could already be interpreted broadly.
+Location: §23.6, MD 1127 / DOCX P1240; §24.2, MD 1149–1153 / P1251–P1253; §22.5, MD 1066 / P1175–P1176.
+Spec quote: “CPU, RSS/peak memory, allocations/GC where applicable, disk/network I/O”.
+Existing protection: equal resource quotas, I/O measurement, protected ingest and peak memory are already specified. The concern is leaving the scope of peak memory ambiguous while explicitly naming process RSS and language allocator/GC metrics.
+Failure counterexample: replay writes a buffered WAL while compaction scans files on a throttled volume. Heap and process RSS remain bounded, but charged dirty page cache, socket/kernel buffers and reclaim/writeback pressure approach the deployment's memory limit. Ingestion or alerts stall under reclaim, with possible OOM when reclaim cannot satisfy allocations. A process-only graph can make the language variant appear safely below its budget.
+Primary evidence: Linux cgroup v2 accounts page cache, anonymous memory, kernel objects and TCP buffers; its memory and I/O controllers interact during writeback. Those resources are not equivalent to a single process's RSS.
+Official source:
+https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
+Impact: understated memory footprint/cost and missed pressure coupling between replay, compaction and fresh writes; inaccurate Rust/Go resource comparison if one stack shifts more work into cached or mapped storage.
+Concrete fix: define measurement scope across the gateway, workers and shared storage dependencies. For the Linux container profile collect cgroup total/peak memory, anon/file/kernel breakdown, memory.events, swap configuration and pressure/reclaim metrics alongside RSS and allocator metrics; record disk bandwidth/IOPS and writeback behavior. Use equivalent hard quotas and state filesystem/cache configuration. Other deployment targets need their equivalent system-level measurements.
+Validation: run memory-constrained replay with compaction and a throttled disk; correlate RSS with charged memory and pressure. No unreported OOM/reclaim collapse may be hidden by a healthy heap graph, and fresh/alert SLOs must hold for the declared profile.
+
+NEGATIVE FINDINGS / CLAIMS I DID NOT MAKE
+1. No fundamental Rust-versus-Go contradiction: MD 1141–1155 correctly rejects a language verdict from two different products and requires equal semantics/resources and maintained-correctness gates. Current Go GC and Tokio documentation support the cautions, not a universal winner.
+2. The 25x fluid-queue illustration at MD 1112 is mathematically sound under the assumptions explicitly stated. It is not presented as measured throughput. The 16-thread ambiguity and wall-clock endurance distinction are explicitly handled.
+3. OTLP partial success is already correctly identified as nonretryable for the whole batch (MD 1004). No finding is warranted merely because partial-success handling is consequential.
+4. Exactly-once delivery is not claimed. Ambiguous ACKs, unsupported deduplication, logical/physical duplicates and deterministic content checks are explicitly discussed at MD 994, 1106–1108 and 927–935. Lack of a selected deduplication key is an acknowledged schema gate, not itself a defect.
+5. Fresh/backlog reordering risk is explicitly constrained by backend windows/downstream semantics (MD 1091), with late cache/rule/notification implications at MD 1093. Prometheus Remote Write 1.0 requires per-series ordering; that informs the chosen adapter gate and does not contradict a spec that allows ordering-compatible scheduling.
+6. Finite retention and outage/rebuild limits are explicit. The architecture does not promise unconditional zero loss or recovery of never-collected, deleted or expired content.
+7. The selected all-in-one packaging does not by itself contradict logical isolation: MD 156 and 1053 permit combining services conditionally while mixed-load isolation remains required. No demand for a fixed container/database count is justified.
+8. The document does not claim benchmarks have passed. Unselected numeric thresholds, engines, queue products, public schemas and authorization propagation are explicitly tracked gates; I did not relabel those choices as architecture failures.
+9. Markdown/DOCX substantive text parity passed the checks described above. No textual mismatch was found.
+
+CURRENT PRIMARY-SOURCE RESEARCH RECORD
+All technical conclusions above use official project documentation, official repositories, or the Linux kernel documentation. Search-result hits from forums and secondary sites were not relied upon. Important search families performed independently:
+- OTLP retry, duplicate and partial-success behavior; opened https://opentelemetry.io/docs/specs/otlp/ . Verified current response semantics and acknowledgement ambiguity.
+- Remote-write ordering and tuning; opened/searched https://prometheus.io/docs/specs/prw/remote_write_spec/ and https://prometheus.io/docs/practices/remote_write/ . Supported negative finding on ordering and backpressure.
+- Tokio blocking cancellation and timeout behavior; opened official docs.rs Tokio pages named in R1-01, plus https://docs.rs/tokio/latest/tokio/task/ . Supported R1-01.
+- OTLP metric single-writer, start-time/reset/temporality and conversion behavior; opened https://opentelemetry.io/docs/specs/otel/metrics/data-model/ and the official Collector delta-to-cumulative README. Supported R1-02. The model's stream-manipulation algorithm is Development, whereas single-writer/temporality requirements are Stable; I do not mandate the illustrative algorithm.
+- Collector stateful scaling; opened https://opentelemetry.io/docs/collector/scaling/ . Confirmed that stateful processors require ownership-aware scaling. No separate tail-sampling finding was raised because sampling incompleteness is already represented by the spec.
+- gRPC cancellation/deadlines and decoding/decompression resource controls; opened official guides, Tonic API and grpc-go source named in R1-01/R1-03. Supported those conditional risks.
+- Arrival-rate generation, omitted/dropped iterations and coordinated omission; searched/opened official Grafana k6 docs named in R1-04, constant-arrival-rate and allocation docs, plus the official HdrHistogram README (raw GitHub). k6 supplies the clearest direct source; HdrHistogram was not used as independent proof of an implementation defect.
+- Linux cgroup v2 total memory, page cache, kernel memory, writeback and pressure; searched and opened https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html . Supported R1-05.
+- Go GC soft memory trade-offs; opened https://go.dev/doc/gc-guide and official runtime/debug documentation search result. Consistent with MD 1143; no Rust superiority inference warranted.
+- Vector ARC; opened https://vector.dev/docs/architecture/arc/ . Supports the reference nature of an adaptive bounded strategy, not a mandatory algorithm or automatic tenant fairness.
+- Mimir late-arrival/cache/recording-rule behavior; opened https://grafana.com/docs/mimir/latest/configure/configure-out-of-order-samples-ingestion/ . Consistent with MD 1093, already anticipated; no duplicate late-cache finding raised.
+- Attempted Tonic CompressionEncoding API URL was unavailable; the successful Tonic server API and grpc-go source provide the narrower decoding-limit support actually used.
+
+LIMITS
+This is a document and standards review, not source-code audit or measured performance test. No production implementation, benchmark harness, workload/SLO charter, candidate backend configuration or actual outage data was supplied, so the five conditional failures have not been reproduced against project code and no product parity claim is assessed. Dates/versions from web pages are the versions served during this review; they are not a frozen compatibility matrix. I did not use reference-conversation contents as technical evidence or inspect visual DOCX rendering. I found no RTK.md in the current workspace/ancestor path; no additional RTK instruction file was available there. No spec edits were made.

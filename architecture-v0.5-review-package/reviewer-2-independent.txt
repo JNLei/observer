@@ -1,0 +1,265 @@
+INDEPENDENT REVIEW 2 — SECURITY, AUTHORIZATION, PRIVACY AND HEADLESS OPERATIONS
+AI-Native Observability Platform Architecture Specification v0.5
+Review date: 2026-11-22
+
+Scope and independence
+I independently read the complete Markdown specification and the Word text extraction, checked the original DOCX document.xml, and researched official sources. I did not retrieve the historical conversation, read another review, or modify the specification. This report is frozen before cross-review.
+
+The review found no P0 issue, no demonstrated fundamental contradiction that requires abandoning the four-plane architecture, and no reason to reopen the explicitly deferred policy engine, storage engine, hybrid design, or capture defaults merely because they are deferred. The strongest issues are missing security composition requirements at the transitions between otherwise well-protected components. They should be made explicit and tested before the relevant implementation is enabled. Findings describe specification risks, not demonstrated vulnerabilities in software that does not yet exist.
+
+Document correspondence
+The original DOCX contains 1,323 nonempty paragraphs and 23 tables. Its nonempty paragraph text matches the supplied extraction exactly. A separate comparison found all 1,294 normalized Markdown prose/code/table-cell units in the Word text, including all 26 top-level numbered headings. I used the P identifiers from the supplied extraction, whose numbering includes blank paragraphs; these are NOT a newly renumbered nonempty-paragraph sequence. No material content discrepancy was found. I did not perform independent visual page-layout QA; this is a semantic/security review.
+
+Priority summary
+R2-01 P1 — Derived artifacts need an explicit confidentiality/information-flow rule.
+R2-02 P1 — Preserved trace/service identifiers need source-authenticity attribution distinct from identity matching.
+R2-03 P2 — Native query escape hatches need a capability boundary, beyond row filters and budgets.
+R2-04 P2 — Declarative management needs a secret-safe state and credential lifecycle contract.
+R2-05 P2 — Complete headless operation needs a first-install bootstrap acceptance case.
+
+The first two are architectural invariant clarifications to resolve before implementing the relevant data models. The remaining three are specific implementation/feature gates. None requires choosing a particular product now.
+
+
+R2-01 — P1 HIGH — Derived artifacts need mandatory confidentiality inheritance or explicit declassification
+Classification: risk / missing composition invariant; not a proven contradiction.
+Confidence: high that the rule/test is absent; medium-high that a naive implementation could violate the intended privacy boundary. A strict interpretation of A7 can already prohibit the outcome; the proposed change makes that interpretation testable.
+
+Exact locations:
+- Section 17 A6, Markdown 842–846; DOCX P0941–P0943.
+- Section 17 A7, Markdown 850–856, especially 852; DOCX P0945–P0948.
+- Section 22.1, Markdown 1016–1018; DOCX P1124–P1125.
+- Related positive protection: Section 19.1, Markdown 920; DOCX P1032.
+
+Source quote:
+“Access to a trace does not automatically imply access to every protected payload.” (MD 852 / P0946)
+“A semantic summary is derived evidence with cited inputs and transform version” (MD 1018 / P1125).
+
+Existing protection acknowledged:
+A6 applies the same authorization model to results, datasets and jobs. A7 governs processing, storage, retrieval, export and egress, and payload access can be narrower than trace access. Saved handles must be reauthorized. Deletion must propagate into derived representations, and queued work rechecks current authority. The spec therefore does not authorize disclosure simply because an agent produced it.
+
+Residual gap:
+The spec never states how the readable scope/classification of a newly generated summary, evaluation rationale, investigation report, dataset example, exported quality aggregate, cache entry, or search index is derived from its inputs. “Use shared authZ” can be implemented correctly for each object while assigning the new object an ACL that is broader than the source ACL. Source-handle reauthorization does not protect copied or paraphrased source content already embedded in that object. Deferred sharing policies need this invariant as a constraint; selecting the ACL engine alone cannot supply it.
+
+Concrete counterexample:
+A worker is authorized to read a production trace and its restricted payload. It generates a diagnosis quoting a customer identifier or secret business fact from that payload. The diagnosis is stored as an ordinary incident report readable by everyone who can read the trace. Another user can read the diagnosis, while payload dereference correctly returns denied. Every individual endpoint uses the shared policy engine, and the worker was authorized at creation/publication, yet the protected fact has crossed the intended boundary. Revoking the second user's source access after an answer cache was populated creates the same issue if only the handle is checked later.
+
+Impact:
+Privilege laundering through derived artifacts, same-tenant confidential-data exposure, and potentially cross-tenant leaks through incorrectly keyed shared caches/aggregates. This is not fixed by citation provenance, redaction of credentials only, or rechecking the producer's permissions.
+
+Concrete proposed fix:
+Add a locked information-flow invariant: generated/persisted/cached artifacts inherit the necessary confidentiality and tenant/resource restrictions of their contributing inputs unless an independently authorized, policy-defined declassification/aggregation operation permits a broader audience. The policy may allow safe aggregates; it need not require every aggregate viewer to read every original event. Retain sufficient dependency/classification lineage for reads, policy changes and deletion. Define authority-aware cache keys and invalidation/revalidation; copying/paraphrasing sensitive input cannot silently create a more public object. Apply the rule to worker traces and error/rationale fields as well as main report bodies. Imported context should carry a documented source-ACL mapping or an explicitly authorized remapping, not infer visibility from the connector's broad service credential.
+
+Validation criterion:
+Use a two-user fixture within one tenant, plus a second tenant: both users can read the trace but only one can read a payload/document. Generate and persist summaries, evaluation explanations, dataset examples and cached answers using that payload. The less-privileged user cannot recover the restricted fact from any derivative, search result, citation preview, error, worker trace or aggregate, unless the test invokes an explicitly approved declassification policy. Repeat after revocation, deletion, cache hit, export and projection rebuild. Verify legitimate policy-approved aggregates remain usable.
+
+Official sources verified:
+- AWS Security Reference Architecture, Data and retrieval: https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture-generative-ai/data-and-retrieval.html
+  Verified: classification extends to chunks/embeddings/exports/stored prompts; caches/citations/deletion and per-user retrieval paths require explicit review. This supports the need to examine derived representations, not a claim that AWS defines the platform's policy.
+- Google source access control: https://docs.cloud.google.com/generative-ai-app-builder/docs/data-source-access-control
+  Verified: search-result access control is tied to verified end-user identity and document permissions. Source ACL mapping is a distinct integration responsibility.
+
+Decision/gate:
+Specify the invariant before persisted semantic results, context indexes or shared caches are served. Exact sharing rules, engine, cache design and declassification criteria remain deferred.
+
+
+R2-02 — P1 HIGH — Identifier equality and immutable history do not establish source authenticity
+Classification: risk / trust-model gap; not a claim that preserving W3C identifiers is wrong.
+Confidence: high for the threat and missing explicit trust distinction; medium-high for severity pending the deployment's ingest-writer model.
+
+Exact locations:
+- Section 7.1, Markdown 330–336; DOCX P0372–P0375.
+- Section 7.3, Markdown 370; DOCX P0392.
+- Section 17 A1, Markdown 798–804, especially 800; DOCX P0919–P0922.
+- Section 19 D3, Markdown 914; DOCX P1019–P1021.
+- Section 21 I5, Markdown 995; DOCX P1108–P1110.
+
+Source quote:
+“Map OTel resource attributes such as service.name, service.namespace, and deployment.environment.name into these identities” (MD 332 / P0373).
+“Authenticate, resolve authorized tenant scope, validate and apply capture/redaction policy before platform durable persistence” (MD 995 / P1109).
+
+Existing protection acknowledged:
+Tenant scope is server-derived, resource-level authorization is required on public APIs, provenance must be preserved, and exact versus heuristic correlation is distinguished. Duplicate/conflicting copies require reconciliation. The platform must not trust client tenant IDs. These are necessary protections, but they do not by themselves explain whether a submitted service identity, trace parent, session membership or span link is an authenticated assertion or only a claim by the submitter.
+
+Residual gap:
+The explicit ingestion responsibility resolves authorized TENANT scope, while normalization maps caller-supplied resource attributes into canonical resource identity. No locked requirement binds the credential/collector to allowed service/environment/source identities, records an unforgeable platform-observed ingest principal, or prevents client-selected trace/run/session IDs from becoming authority to mutate/join a more trusted execution. D3 calls canonical observations authoritative, but should mean authoritative history of what was received, not that every received assertion is true. An exact ID match is exact syntactic correlation, not authenticated causation.
+
+Concrete counterexample:
+A compromised low-trust service has a valid tenant ingest token. It knows a production trace ID from a propagated request and emits spans with that ID, a chosen parent/span ID, and resource attributes naming another service/environment. A normalizer preserves the IDs and maps service.name as instructed. A projection merges these spans into the protected production run or accepts a conflicting completion/status observation. The resulting immutable execution history now contains attacker-attributed “facts” apparently originating from the production service; downstream evaluators and investigators use the exact join as strong evidence. No cross-tenant query is needed. If storage or session keys omit tenant scope, intentionally reused IDs also become a cross-tenant merge risk.
+
+Impact:
+Telemetry poisoning, forged execution provenance, corrupted evaluation targets/quality metrics, false diagnosis, and possible authorization confusion when membership in a trace/run/session determines visibility.
+
+Concrete proposed fix:
+Preserve original W3C IDs, but add server-attested ingest subject/source/channel and a declared trust level distinct from client resource claims. Bind writers to allowed resource scopes where the installation claims service-level isolation; otherwise label the source as tenant-wide/untrusted attribution rather than pretending to authenticate service origin. Namespace all correlation, deduplication, run/session and projection keys by tenant and appropriate source/trust domain. Define who may add observations, finalize/revise execution and attach links. ID knowledge alone cannot grant read, write, membership or override authority. Define collision/impersonation quarantine or attributed conflict behavior. Keep “exact ID correlation” distinct from “source authenticated” and “causal relationship established.”
+
+Validation criterion:
+Give service A's writer no authority over service B. Submit B's service attributes, copied trace/span/run/session IDs, forged parent links, duplicate spans and completion signals through A's credential and through every adapter. They must be rejected or retained as A-attributed/untrusted claims without modifying B's trusted execution or ACLs. Repeat with identical IDs across two tenants and after projection rebuild. A legitimate multi-service distributed trace must still correlate while retaining per-observation source attribution.
+
+Official sources verified:
+- W3C Trace Context Recommendation, Security Considerations: https://www.w3.org/TR/trace-context/#security-considerations
+  Verified: malicious callers can forge trace-ID collisions and undermine monitoring; the standard recommends checks and limits. W3C correlation identifiers are not an authentication protocol. The latter is an inference from the described protocol and threat model, not a quoted promise.
+- OpenTelemetry context propagation: https://opentelemetry.io/docs/concepts/context-propagation/
+  Verified: propagation crosses service/security boundaries and requires security consideration. Preserving interoperable context does not remove the trust boundary.
+
+Decision/gate:
+Add a source-authenticity/threat-model contract before canonical identity/projection persistence and delegated service-level ingest are implemented. Do not require cryptographic signing of every telemetry event or choose an identity product now; a trusted collector with constrained configuration may be one valid design.
+
+
+R2-03 — P2 MEDIUM — A native query can exercise network/file capabilities even when its rows and cost are bounded
+Classification: conditional integration risk / adapter conformance gate.
+Confidence: high for the capability distinction; medium for applicability because no engine is selected and an adapter may already disable the capability.
+
+Exact locations:
+- Section 8.1, Markdown 380–384; DOCX P0397–P0399.
+- Section 9.1, Markdown 489; DOCX P0493.
+- Section 22.1, Markdown 1016; DOCX P1124.
+- Section 22.5, Markdown 1057; DOCX P1162.
+
+Source quote:
+“Validate backend-native escape hatches with the same controls.” (MD 1016 / P1124).
+
+Existing protection acknowledged:
+The server must derive real tenant/resource scope, constrain the underlying query rather than merely authorize a tool name, and enforce byte/time/cost limits. Production remediation crosses a separate authorized action boundary. These prohibit many naive SQL/selector bypasses.
+
+Residual gap:
+The specified query controls focus on scope and bounded execution. They do not explicitly require a data-only capability subset, constrained backend identity, or policy enforcement for network/file/extension capabilities reachable from query syntax. A read-like statement can still make an outbound request. This bypasses the intended tool/egress boundary without looking like a destructive command or an external model call. Applying a tenant predicate to ordinary tables is insufficient if another query operator reads a remote location or server-side file.
+
+Concrete counterexample:
+If a future ClickHouse adapter exposes suitable table functions under its backend credential, SELECT from url(...) initiates a server-side HTTP GET. An attacker with ordinary query permission chooses an internal endpoint or an attacker-controlled URL. The operation may fit every result/time/concurrency limit and read no unauthorized tenant table, while crossing network boundaries using backend placement/authority. This is a conditional example, NOT a claim that ClickHouse is selected or that all read-only ClickHouse accounts permit it. The official current documentation specifically states url() is unavailable under readonly=1 and requires CREATE TEMPORARY TABLE (at least readonly=2), so a correctly constrained account blocks this example.
+
+Impact:
+Server-side request forgery, outbound disclosure through request URLs, exposure of internal services, or access to server-local data/extension capabilities if enabled. Network-isolated deployments remain vulnerable to internal lateral requests unless that path is also constrained.
+
+Concrete proposed fix:
+Require every adapter's public raw/native path to declare and enforce an authorized capability subset. Default query execution to data-only, prohibit external URL/file/network/UDF/executable facilities unless a separate explicit capability authorizes them, and use least-privilege backend roles. Apply destination/content policy at the actual network boundary, including redirect/re-resolution behavior for enabled fetch capabilities. Inspect the full expression tree or compile through a constrained interface rather than assuming SELECT means harmless. Include catalog/system metadata, federated sources and session settings in the capability review. Where an engine cannot safely constrain a native feature, disable that feature for untrusted clients.
+
+Validation criterion:
+An authorized query principal cannot reach a test internal HTTP endpoint, an unapproved external endpoint or a server-side file through native queries, aliases, subqueries, table functions, changed settings or redirects. Confirm no request occurs using an instrumented destination, even if the query returns an error. Ordinary authorized queries and explicitly authorized connectors remain functional.
+
+Official sources verified:
+- ClickHouse url table function, behavior and permissions: https://clickhouse.com/docs/reference/functions/table-functions/url
+  Verified: SELECT can perform HTTP GET; the page documents separate permissions and readonly restrictions. This is evidence of a query capability class, not a backend recommendation.
+- OpenTelemetry collector security configuration: https://opentelemetry.io/docs/security/config-best-practices/
+  Verified: integrations/extensions can add privileged/network attack surface and should have only needed permissions. The proposed cross-adapter rule is this reviewer's architectural inference.
+
+Decision/gate:
+Add capability conformance to adapter selection/public-native-query enablement. No need to freeze the query engine or transport first.
+
+
+R2-04 — P2 MEDIUM — Credential protection must include IaC state, not only backend API responses
+Classification: risk / declarative-management implementation gate.
+Confidence: high.
+
+Exact locations:
+- Section 3.1 Management/Security ownership, Markdown 180; DOCX P0242.
+- Section 4.3, Markdown 251–257, especially 255; DOCX P0315–P0318.
+- Section 8.2, Markdown 400; DOCX P0432.
+- Section 13.1 TEST-010, Markdown 628; DOCX P0746–P0748.
+
+Source quote:
+“data-source registrations and credentials” (MD 180 / P0242).
+“Manage platform resources as code: users, roles/policies, agents, data sources ... through ... declarative providers.” (MD 255 / P0317).
+
+Existing protection acknowledged:
+Backend credentials are not delegated to untrusted agents/custom UIs, query logs redact confidential input, and management remains the credential authority. Encryption/key management is explicitly deferred. The issue is not that an encryption technology has not been selected.
+
+Residual gap:
+A provider can comply with “never return backend credentials” on Read and still persist a secret supplied in configuration into its plan/state. Marking a field sensitive only masks normal display. The spec has no secret-reference, write-only setter, one-time credential creation/rotation, import, or drift semantics for declaratively managed data sources/service accounts. TEST-010 can pass while backups of the IaC state retain every external backend credential. These copies sit outside the platform's redaction/deletion boundary.
+
+Concrete counterexample:
+An operator declaratively creates a data source with username/password or API key. The provider schema marks the secret sensitive and sends it to a write-only platform endpoint. The UI/API never returns it. Terraform nevertheless retains the configured value in state and saved plan artifacts, which a wider infrastructure-read group or CI artifact reader can access. Later rotation/deletion of the platform credential does not erase those artifacts. This does not require a platform read-permission bypass.
+
+Impact:
+Credential disclosure and unintended expansion of who can use telemetry/cloud/LLM credentials; secret-bearing state also harms safe declarative import, backup and support workflows.
+
+Concrete proposed fix:
+Make secret references the preferred declarative representation where practical, with explicit write-only secret-setting/rotation endpoints for direct values. Separate credential version/rotation markers from credential values so refresh/import and drift detection do not need secret disclosure. Define single-use retrieval for newly issued platform tokens and safe recovery/rotation semantics. Each supported IaC client/version must publish whether secrets enter configuration, state, saved plans, logs or import outputs; offer a supported route that avoids persistent cleartext copies, and clearly document protection requirements when a chosen client cannot. Do not silently promise universal ephemeral-value support across Terraform/OpenTofu versions.
+
+Validation criterion:
+Create, update/rotate, refresh, import and destroy a data source and service account through the supported headless/IaC path. Search configuration examples, saved plan, state, provider logs, errors and support export for a unique canary secret. The supported secret-reference/write-only flow must not persist it in artifacts claimed to be secret-free; imports/reads cannot recover it. Rotation produces a stable declarative plan and invalidates the old credential according to the selected policy.
+
+Official sources verified:
+- Terraform sensitive data: https://developer.hashicorp.com/terraform/language/manage-sensitive-data
+- Terraform provider write-only arguments: https://developer.hashicorp.com/terraform/plugin/framework/resources/write-only-arguments
+  Verified: ordinary secret configuration can enter plan/state; sensitive masking differs from persistence avoidance; supported write-only arguments do not persist in state/plan and can accept ephemeral values. Feature/version compatibility must be deliberate. These facts do not mandate HashiCorp products or exclude OpenTofu.
+
+Decision/gate:
+Add a secret lifecycle and artifact-leakage acceptance case before shipping declarative credential-bearing resources. Key-management implementation and provider packaging remain appropriately deferred.
+
+
+R2-05 — P2 MEDIUM — Headless conformance must begin from zero identity and policy state
+Classification: risk / missing bootstrap acceptance gate, not an inconsistency between default-deny and headless operation.
+Confidence: high that the explicit bootstrap test is absent; medium for prioritization before first usable release.
+
+Exact locations:
+- Section 9.1 default deny, Markdown 491; DOCX P0494.
+- Section 13.1 TEST-001 and TEST-010, Markdown 619 and 628; DOCX P0719–P0721 and P0746–P0748.
+- Section 22.5 complete local authority, Markdown 1055; DOCX P1161.
+- Related declared deferral: Section 12 authZ operations, Markdown 603; DOCX P0691–P0693.
+
+Source quote:
+“Default deny where valid permissions cannot be established” (MD 491 / P0494).
+“Backend ingest, query, alerts, management operations without default UI” (MD 619 / P0721).
+
+Existing protection acknowledged:
+The spec forbids requiring a UI to provision/manage accounts, requires local customer authority, supports declarative deployment, and explicitly defers emergency/offline behavior to a production-security gate. Thus it already implies that a secure headless bootstrap must exist. This finding is a missing concrete acceptance boundary, not a request to decide all emergency policy now.
+
+Residual gap:
+TEST-001 may be exercised against an installation with a precreated administrator/token. That does not demonstrate how a fresh installation establishes its first trusted operator, identity-provider configuration and policy without either trusting an unauthenticated remote request or relying on an undisclosed UI/hosted/local-database shortcut. No bootstrap ownership/one-time activation or reinitialization requirement is stated, and it is not called out in the immediate vertical-slice test.
+
+Concrete counterexample:
+CI seeds an admin row directly into the database, so all headless smoke tests pass. The packaged installation starts with default-deny but has no authorized principal able to create the first service account or register the IdP. To make installation possible, a developer later adds an always-available unauthenticated “first admin” endpoint, creating a race on a newly exposed installation. Conversely, deleting the last admin or IdP configuration can strand local administration if recovery is undocumented. The current spec would disapprove weak authorization, but the fixture never exposes the gap.
+
+Impact:
+Unusable first-install automation, hidden privileged setup paths, first-admin takeover, or insecure operational workarounds. This is a packaging/security gate rather than a blocker to the logical architecture.
+
+Concrete proposed fix:
+Define a documented local, headless bootstrap contract with proof of installation/operator possession (for example, an installation-bound one-time secret or an OS-admin-controlled offline initialization action), atomic first-owner establishment, safe concurrent/repeated initialization, and a disabled/consumed bootstrap credential after setup. The exact mechanism can be selected during the minimal management layer. Add a separate documented recovery path with explicit authority and audit rather than weakening ordinary authorization. Preserve preseeded declarative installation as an option if its trust/secret delivery is documented.
+
+Validation criterion:
+From clean storage and no identities, install without UI, hosted service or direct database editing; establish the first owner, configure an IdP or local identity, create constrained service accounts, and run ingest/query/management. Concurrent unauthorized bootstrap attempts must fail; reused bootstrap credentials cannot elevate rights after setup; reinstall/restart cannot silently reopen setup. Exercise lost-IdP/last-admin recovery according to the declared supported policy.
+
+Official sources verified:
+- Vault initialization API: https://docs.hashicorp.com/vault/api-docs/system/init
+- Vault operator initialization: https://docs.hashicorp.com/vault/docs/commands/operator/init
+- Vault tokens: https://developer.hashicorp.com/vault/docs/concepts/tokens
+  Verified: initialization and initial root credential establishment are explicit operations separate from ordinary token-authenticated use. This is a reference example demonstrating the lifecycle boundary, not a requirement to copy Vault's mechanism or adopt it.
+
+Decision/gate:
+Add the empty-state install case to TEST-001 and the prototype's management slice. Exact identity provider, recovery mechanism and credential lifetime are implementation decisions.
+
+
+Negative findings and protections that should be preserved
+1. Pre-persistence privacy is unusually explicit: I5 includes WALs, queues, spools, diagnostic logs and payload stores, with source collector disks separately addressed (MD 995–1000 / P1108–P1116). “Add redaction before the main database” would merely restate existing requirements.
+2. Immutable execution history does NOT conflict with deletion: MD 920 / P1032 explicitly permits removal and requires propagation, and forbids reconstruction of deliberately removed content. No immutability-versus-privacy contradiction was found.
+3. Worker privilege bypass is already prohibited. A6, current-authority rechecks before execution/publication, cancelled-work validation and TEST-040 address that class (MD 844, 929–935, 663 / P0942, P1037–P1040, P0841–P0843). Exact freshness windows are a legitimate production gate, not automatically a defect.
+4. Prompt injection cannot grant rights. Logs, runbooks, Git files and outputs are untrusted; deterministic execution and separate action authorization are explicit (MD 513, 1016, 1033, 1041 / P0505, P1124, P1150, P1154). I did not assert that a prompt filter is required or sufficient.
+5. Untrusted code evaluators are explicitly isolated before enablement, and automatic evaluation recursion has an explicit gate (MD 1047–1049 / P1157–P1158). Missing product choice is not a sandbox omission.
+6. Hosted UI cannot reach private endpoints merely through CORS, and optional hybrid cannot become a required authority (MD 196, 505–507, 1055–1068 / P0250, P0501–P0502, P1161–P1178). No initial-release hybrid-network design is needed to make these constraints coherent.
+7. Recovery claims are finite and scoped. Accepted/durable/queryable/processed are distinguished, OTLP partial success is not whole-batch retry, and losses/duplicates need accounting. The document does not promise universal exactly-once or unconditional zero loss (Sections 19, 21, 23). No contrary defect is asserted.
+8. Metadata-first capture is proposed, not approved; lack of an approved default is openly deferred before sensitive capture. I have not silently promoted opt-in capture into a selected requirement.
+9. The spec requires cross-tenant non-disclosure, resource-level enforcement, reauthorization of handles, and backend-native scoping. I did not find a passage affirmatively permitting cross-tenant access. The reported risks concern missing composition/attribution semantics inside those broad intentions.
+10. I did not elevate “cannot infer existence” in TEST-006 into a separate finding. A realistic threat model should eventually define coverage for status/error/metadata/cache/timing channels, but the phrase can reasonably be read as an API non-disclosure goal rather than an absolute information-theoretic guarantee.
+11. General parse/decompression/oversized-record denial-of-service remains worth testing, but existing bounded-memory, poisoned-record, fairness, workload-isolation and resource-quota requirements are sufficient to treat this as a test refinement rather than another independent architecture defect without implementation evidence.
+12. No license, storage or Rust/Go performance conclusion is made in this review. The spec correctly treats exact license/dependency approval and language measurement as gates.
+
+Research performed
+Independent searches covered: source ACL and RAG result/cache authorization; multi-resource authorization; OpenTelemetry untrusted telemetry and trace spoofing; W3C trace-context security; native query network capabilities and ClickHouse URL permissions; Terraform state/sensitive/ephemeral/write-only behavior; secure initial authority establishment; OpenTelemetry receiver/integration security; Kubernetes secret protection. Search queries were made during this review rather than copied from the specification's source list. Only official/primary sources above support findings. Search results also surfaced secondary material and old issues, which were not relied on for current behavior.
+
+Additional official sources inspected or consulted (no independent defect attributed):
+- https://opentelemetry.io/docs/security/
+- https://opentelemetry.io/docs/collector/configuration/
+- https://opentelemetry.io/docs/specs/otel/trace/tracestate-handling/
+- https://kubernetes.io/docs/concepts/security/security-checklist/
+- https://kubernetes.io/docs/concepts/security/secrets-good-practices/
+- https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-acl.html
+- https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-retrieve.html
+- https://docs.cloud.google.com/generative-ai-app-builder/docs/data-source-access-control
+- https://developer.hashicorp.com/terraform/language/manage-sensitive-data/ephemeral
+- https://developer.hashicorp.com/terraform/language/manage-sensitive-data/write-only
+- https://www.w3.org/TR/trace-context-1/
+
+Research limitations
+No implementation, threat model, workload, deployment topology, API schema, actual connector, selected backend role or provider state was supplied. Therefore there was no exploit reproduction and no claim that a selected component is currently exposed. Severity is potential architectural impact under plausible implementations; applicability conditions are explicit. Official documentation was live/current at review time and can evolve; the spec should pin actual versions when components are selected. The Word semantic correspondence check does not prove visual layout quality. I did not access the referenced historical conversation or verify approval provenance beyond the text provided. The workspace-referenced RTK.md was absent from the working directory and checked parent locations; no additional instructions were inferred from that missing file.
+
+END OF FROZEN INDEPENDENT REVIEW 2
