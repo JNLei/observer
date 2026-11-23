@@ -36,6 +36,7 @@ type counts struct {
 	Attempts     int64 `json:"store_attempts"`
 	Acknowledged int64 `json:"store_ack_records"`
 	Unknown      int64 `json:"store_unknown_records"`
+	BadRequests  int64 `json:"store_http_400_attempts"`
 	Outstanding  int64 `json:"outstanding_records"`
 	Overloads    int64 `json:"overloaded_requests"`
 }
@@ -177,6 +178,10 @@ func (t *trial) ingest(w http.ResponseWriter, r *http.Request, u *tenant) {
 		u.counts.AckBytes += int64(len(b.wire))
 	} else {
 		u.counts.Unknown += int64(b.accepted)
+		if code == http.StatusBadRequest {
+			// Loki can commit the valid subset before returning 400.
+			u.counts.BadRequests++
+		}
 	}
 	u.mu.Unlock()
 	<-u.writer

@@ -1,4 +1,4 @@
-# M1 Rust/Go workload charter, revision 1
+# M1 Rust/Go workload charter, revision 1 with review corrections
 
 This charter precedes the first OTLP trial. The owner approved an OpenTelemetry
 Collector persistent source sending queue and a single-node Grafana Loki trial.
@@ -14,12 +14,14 @@ Use generated OTLP/HTTP binary protobuf log messages, identity or gzip, on
 schema, single ingester, enabled WAL and filesystem data directory for both
 variants. Start each run with empty private data directories on a trusted,
 single-user host. Bind development TCP endpoints to numeric loopback. Issue
-fresh credentials for each run. Derive the tenant and producer from the
-authenticated credential. Accept only generated fixtures.
+fresh credentials for each run. Each credential selects a tenant. Both
+receivers assign every export the single synthetic producer `m1-bench`.
+Submitted service names and resource claims are stripped. General verified
+producer attribution remains open under S02 / TEST-043.
 
 | Dimension | Provisional functional workload |
 | --- | --- |
-| Record shape | One deterministic integer `bench.seq` attribute per record. Cycle string body sizes of 32, 256 and 1,024 bytes by sequence number. Preserve event and observed timestamps, severity and valid trace/span IDs. Produce the stored line from the sequence number. Replace resource identity with the configured producer and discard all free text and other attributes before forwarding. |
+| Record shape | One deterministic integer `bench.seq` attribute per record. Cycle string body sizes of 32, 256 and 1,024 bytes by sequence number. Preserve event and observed timestamps, severity and valid trace/span IDs. Produce the stored line from the sequence number. Assign the fixed fixture service and discard free text and other attributes before forwarding. |
 | Batches | Exercise empty, single, mixed valid/invalid and multirecord requests. Cap wire and inflated payloads at 65,536 bytes each and batches at 256 records. No per-record test ID becomes a metric label. |
 | Admission | Maximum 12 active HTTP connections, 3 admitted writes per tenant including 1 active downstream write, and 1 independent read per tenant. Use two principals. Close client connections after each response. Bound body-read and store-call time. Return explicit overloads. |
 | Historical load | Model 24 hourly batches of 4 records, with original timestamps covering the previous 24 hours. Bring the receiver offline before submitting. Confirm queue acceptance, kill and restart the source Collector on the same disk, then reconnect. |
@@ -37,6 +39,32 @@ Retry can create physical duplicates. No write or queue-empty counter proves
 query visibility. Loki documents a full-disk exception to WAL durability.
 [Collector queue](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.165.0/exporter/exporterhelper/README.md)
 and [Loki WAL](https://grafana.com/docs/loki/latest/operations/storage/wal/).
+
+### Controls added for independent review
+
+Keep the original 96 historical and 24 live records and the unpaced run.
+Compare the full multiset built from the generated inputs with authorized
+reads after drain and again after Loki restart. Excess copies and unexpected
+fields fail even an intermediate probe. During the outage both queue gauges
+must report their expected request counts, including the empty live lane.
+The first source process must report 96 history records accepted. Counters
+restart with the process. Each absent series is recorded as null.
+
+Repeat the 120-record trial on fresh disks for the overlap assertion. All
+history is queued before reconnect. A loopback relay delays each history
+exchange by 150 ms, independently of the live lane and the read path. Start
+the live schedule after an independent query sees the first historical prefix.
+Require two time-ordered successful probes, each showing both classes partially
+visible, with both counts increasing between probes. Record the two samples.
+These controlled timings serve only the overlap test.
+
+After the unpaced restart checks, use a disjoint time window for the rejection
+regression. Send one locally mixed-validity export, then a mixed-age export
+with one record 72 hours old, a later same-lane export and a live control.
+Observe at least two retries after enqueuing the follower. Compare source
+metrics, receiver dispositions, Loki age discards and authenticated reads.
+The test ends with two synthetic history requests pending. The proposed
+custody policy requires owner review. [Proposed Loki ADR](../adr/PROPOSED-loki-poisoned-exports.md)
 
 ## Subsequent representative profiles
 

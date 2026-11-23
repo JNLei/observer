@@ -1,18 +1,54 @@
 # M1 log ingestion and restart evidence
 
-The first production-shaped slice is ready for independent review. The
-production language decision and full M1 acceptance remain open. The tested
-implementation is [06794c1](https://github.com/JNLei/observer/commit/06794c1dfb17ca1a586b9bd1c9c429809ef6d980).
-The working tree was clean for the paired local recovery run.
+Independent review conditionally accepted the original single-node observation
+at `193605d`. The corrections below apply to logs on one intact local disk.
+Full M1, TEST-038 and the language decision remain open.
 
-## What the recovery run established
+## Independent review corrections
+
+| Finding | Executable evidence |
+| --- | --- |
+| P2-1, record integrity | The oracle builds a multiset from the input fixtures. Excess copies or unexpected values fail during replay. Two settled reads independently require exact equality before and after the Loki kill. The real-driver negative controls duplicate a row in the complete 120-row response and, separately, only after restart. Unit cases cover a missing row, a substitution at equal row count and corruption of every compared field. |
+| P2-1, overlap | The original unpaced workload and a separately paced 120-record workload run on independent disks. The controlled run requires two partial probes showing progress in both classes. A negative control hides fresh values in actual query replies until all 96 historical values are visible. Event times and OTLP observed timestamps stay intact throughout. |
+| P2-2, permanent rejection | Real Loki 3.7.10 received an expired and an eligible record in one export. Each receiver counted a downstream 400 with unknown record outcomes. The eligible member was queryable, the same-lane follower stayed queued through at least two further retries, and an independent live export became queryable. A shared sink test also observes two eligible writes on repeated mixed attempts and zero writes for an all-expired attempt. |
+| P3-1, Collector accounting | Each run checks 24 queued history requests and zero live requests before the source kill, after restart and with Loki unavailable. The first process reports 96 accepted history records. A separate two-record OTLP partial success increments exporter sent by two, with one receiver rejection, one store ACK and one row visible. Missing series appear as null. |
+| P3-2, producer attribution | The shared test submits forged resource identity under both credentials. Their authenticated tenants differ and the stored `service.name` is the same fixed `m1-bench` fixture. S02 / TEST-043 remains open. |
+
+The reviewed harness also ran locally with both read faults injected. It
+passed with 121 rows, 120 unique identities, one visible duplicate and no
+fresh observation before full history. In the first corrected local pair,
+both receivers returned exactly 120 rows at both restart boundaries in each
+scenario. In the controlled runs, both observed the counts advance from four
+historical and one live to eight historical and two live. Each mixed-age
+probe recorded three Loki 400s and six unknown record attempts. The read
+showed one eligible member and one independent live record. The Collector
+still held two history requests. Counts of physical Loki writes remain unknown.
+
+The proposed source-owned quarantine would allow later same-lane work after
+an atomic, durable custody transfer. The existing implementation keeps
+retrying. Adoption requires owner approval. [Proposed ADR](../adr/PROPOSED-loki-poisoned-exports.md)
+
+Run `./scripts/check.sh`, `./scripts/check-race.sh`, `./scripts/bench-smoke.sh`
+and `./scripts/bench-recovery.sh`. The recovery script builds both receivers,
+runs the unpaced, rejection and controlled cases, then runs the three
+negative controls against live query responses. Each CI run retains the
+generated JSON and smoke metadata for 30 days in an artifact named for the
+tested commit. Its recovery JSON includes the raw per-lane series, overlap
+samples, pending dispositions, binary hashes and query digest.
+[Workflow](../../.github/workflows/ci.yml)
+
+## Original local observation
+
+The following measurements refer to a clean local run of
+[06794c1](https://github.com/JNLei/observer/commit/06794c1dfb17ca1a586b9bd1c9c429809ef6d980).
 
 On a fresh private disk directory per variant, the Collector accepted 24
 historical batches of four records while the receiver was offline. Its queue
 reported 24 requests both before and after a process kill. Bringing up the
 receiver without Loki produced one four-record attempt with an unknown store
-outcome, zero store acknowledgements and zero successful source exports in
-each run. All 24 queue entries remained observable. The harness then killed
+outcome and zero store acknowledgements in each run. The source exporter
+sent series was absent in the outage scrape. All 24 queue entries remained
+observable. The harness then killed
 the receiver, started Loki and reconnected the receiver during live generation.
 
 Each healthy receiver handled 48 batches, including the 24 fresh single-record
@@ -59,7 +95,7 @@ Its matched query-result digest is
 Fresh runs produce their own ignored directory, absolute fixture epoch,
 binary hashes, queue snapshots, counters and measurements.
 
-## Verification and traceability
+## Original verification and traceability
 
 | Command or component | Evidence |
 | --- | --- |
@@ -77,7 +113,7 @@ Collector/Loki restart steps for the tested code. [Implementation workflow run](
 The source queue and log store are owner-approved trial choices. The path
 runs headlessly, applies tenant authorization and capture filtering before
 platform writes, and queries the store independently. No architecture change
-or new ADR is proposed. Production identity, durable replication, disk-full
+was adopted by the trial. Production identity, durable replication, disk-full
 and node-loss behavior, metrics writer/temporality and reset semantics
 (TEST-045), traces, adaptive admission, mixed alerts/evaluation, deployment
 pressure (TEST-055), REC-REF-24 and quantitative SLO/cost criteria remain

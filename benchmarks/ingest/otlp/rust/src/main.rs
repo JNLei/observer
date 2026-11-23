@@ -40,6 +40,7 @@ struct Counts {
     attempts: usize,
     acknowledged: usize,
     unknown: usize,
+    store_http_400_attempts: usize,
     overloads: usize,
 }
 struct Tenant {
@@ -203,26 +204,28 @@ async fn ingest(req: Request<Incoming>, tenant: Arc<Tenant>, trial: Arc<Trial>) 
         let _active = tenant.writer.acquire().await.unwrap();
         tenant.counts.lock().unwrap().attempts += 1;
         let size = batch.wire.len();
-        let ack = matches!(
-            timeout(
-                IO_TIME,
-                store(
-                    &trial.socket,
-                    tenant.name,
-                    Method::POST,
-                    "/otlp/v1/logs".into(),
-                    batch.wire
-                )
-            )
-            .await,
-            Ok(Ok((204, _)))
-        );
+        let outcome = timeout(
+            IO_TIME,
+            store(
+                &trial.socket,
+                tenant.name,
+                Method::POST,
+                "/otlp/v1/logs".into(),
+                batch.wire,
+            ),
+        )
+        .await;
+        let ack = matches!(outcome, Ok(Ok((204, _))));
         let mut counts = tenant.counts.lock().unwrap();
         if ack {
             counts.acknowledged += batch.accepted;
             counts.ack_bytes += size;
         } else {
             counts.unknown += batch.accepted;
+            if matches!(outcome, Ok(Ok((400, _)))) {
+                // Loki can commit the valid subset before returning 400.
+                counts.store_http_400_attempts += 1;
+            }
         }
         ack
     });
@@ -263,6 +266,7 @@ async fn handle(req: Request<Incoming>, trial: Arc<Trial>) -> Reply {
                 "store_ack_records": c.acknowledged,
                 "store_ack_bytes": c.ack_bytes,
                 "store_unknown_records": c.unknown,
+                "store_http_400_attempts": c.store_http_400_attempts,
                 "outstanding_records": c.admitted - c.acknowledged - c.unknown,
                 "overloaded_requests": c.overloads
             });

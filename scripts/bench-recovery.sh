@@ -12,3 +12,4 @@ go -C benchmarks/ingest/otlp/go build -mod=readonly -buildvcs=false -o ../../bin
 result_dir=$(mktemp -d "$ROOT/benchmarks/ingest/results/recovery.XXXXXX")
 printf 'Paired functional recovery results in %s/result.json\n' "$result_dir"
 python3 benchmarks/ingest/otlp/recovery.py --output "$result_dir/result.json"
+python3 benchmarks/ingest/otlp/test_negative_reads.py -v

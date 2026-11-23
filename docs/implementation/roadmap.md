@@ -76,8 +76,11 @@ features are enabled; their tests are not waived by the milestone sequence.
 - **Blocking decisions:** the owner selected the Collector and Loki for the
   process-restart trial. Scoring requires representative workload evidence,
   approved SLO/cost/loss criteria and additional signal candidates.
-- **Status:** the logs slice is implemented and available for independent
-  review. The full scored multi-signal recovery and language gate is open.
+- **Status:** the reviewed single-node logs slice has corrected integrity,
+  overlap and accounting checks. The permanent-rejection regression demonstrates
+  a blocked history lane. Durable quarantine awaits owner review. The full
+  scored recovery and language gate remains open. [Review evidence](validation-m1-logs.md)
+  and [proposed custody policy](../adr/PROPOSED-loki-poisoned-exports.md).
 
 ## M2 — Production-shaped language and recovery gate
 

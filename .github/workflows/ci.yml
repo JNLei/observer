@@ -22,5 +22,19 @@ jobs:
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - name: Format, lint, build and test
         run: ./scripts/check.sh
+      - name: Exercise race-instrumented receivers
+        run: ./scripts/check-race.sh
+      - name: Run the synthetic smoke
+        run: ./scripts/bench-smoke.sh
       - name: Exercise Collector and Loki restart recovery
         run: ./scripts/bench-recovery.sh
+      - name: Retain generated benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-log-review-${{ github.sha }}
+          path: |
+            benchmarks/ingest/results/recovery.*/result.json
+            benchmarks/ingest/results/smoke.*/*.json
+            benchmarks/ingest/results/smoke.*/metadata.txt
+          retention-days: 30

@@ -17,11 +17,30 @@ checked-in YAML files contain environment references for ephemeral credentials.
 | Boundary | Observable behavior |
 | --- | --- |
 | Source | The stock Collector receives generated OTLP/HTTP JSON, persists an export request in a finite source-owned queue and replies. Each history/live queue holds 64 requests with one consumer and fsync enabled. The exporter sends gzip binary protobuf, backs off on retry, and records terminal dispositions. The source can retain the original synthetic body. |
-| Admission | Both receivers decode the official log export schema and accept only the fixture profile. Both credentials use the same read/write policy on their respective tenant. Resource, scope, arbitrary attributes and free text are stripped. The credential supplies tenant/producer scope. Each accepted record retains original event/observed timestamps, severity, trace/span correlation, the low 8 flag bits and a generated line derived from a positive integer `bench.seq`. Record order within the export is preserved. |
+| Admission | Both receivers decode the official log export schema and accept only the fixture profile. Each credential selects its own tenant with the same read/write policy. The single-producer fixture assigns the literal `m1-bench` to both tenants. Receivers strip submitted resource, scope, arbitrary attributes and free text. Each accepted record retains original event/observed timestamps, severity, trace/span correlation, the low 8 flag bits and a generated line derived from a positive integer `bench.seq`. Record order within the export is preserved. S02 / TEST-043 remains open for general producer attribution. |
 | Write | Each sanitized nonempty batch is sent once per upstream attempt to Loki on a private Unix HTTP socket. Only the pinned Loki handler's HTTP 204 confirms a write. A different status, timeout, disconnect or redirect yields 503 with an unknown write outcome. No receiver-side retry. The source owns retries. |
 | OTLP response | Full success is HTTP 200 with an empty protobuf response. Mixed batches report a protobuf partial success after the eligible subset receives 204. Do not retry the entire partial batch. Empty exports succeed without a store write. Wholly invalid records or malformed protobuf return 400, missing/invalid credentials 401, oversize 413, unsupported format/encoding 415 and full tenant admission 429. Error bodies use fixed google.rpc.Status messages. |
 | Visibility | The private authenticated read accepts only a start/end pair, with a fixed service selector, credential-derived tenant, 26-hour maximum window, 512 returned rows and 512 KiB response cap. Loki allows 48-hour-old samples and a same-stream reordering window of 26 hours. Polling gives an upper bound on first visibility. The probe verifies actual timestamp, sanitized line, observed timestamp, severity and trace/span IDs in range-query results. |
-| Counters | Per-tenant admitted, invalid, acknowledged, unknown and outstanding **record attempts** are distinct from unique visible records. The synchronized snapshot conserves admitted = acknowledged + unknown + outstanding. Input bytes count validated request bodies on the wire. ACK bytes count sanitized protobuf payloads receiving 204. Pre-decode rejection has no inferred record count. |
+| Counters | Per-tenant admitted, invalid, acknowledged, unknown and outstanding **record attempts** are distinct from unique visible records. The synchronized snapshot conserves admitted = acknowledged + unknown + outstanding. `store_http_400_attempts` counts downstream batch responses, including mixed commits. The forwarded records on each such attempt contribute to unknown. Input bytes count validated request bodies on the wire. ACK bytes count sanitized protobuf payloads receiving 204. Pre-decode rejection has no inferred record count. |
+
+Collector Contrib 0.165.0 counts all records in an export when its OTLP
+exporter returns normally, including a decoded partial-success response.
+The two-record partial-success control records two sent, one local rejection,
+one store ACK and one queryable row. Each snapshot preserves the raw series
+and reports a missing per-lane series as null. After replay, both queue gauges
+must explicitly report zero and both sent counters must match the input to
+their exporter. Storage evidence comes from the receiver's 204 boundary, WAL
+observations and independent reads after a process kill. [Exporter accounting](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.165.0/exporter/exporterhelper/internal/obs_report_sender.go)
+
+The unpaced and controlled runs each compare returned multiplicities, original
+event and observed timestamps, line, service, severity and trace/span IDs with
+the generated corpus on both sides of restart. Monotonic query-completion
+times measure first observed visibility. Only the independently paced run
+certifies observed overlap. A separate rejection scenario captures a
+permanently stuck history lane, unknown mixed-batch commits and independent
+live progress. The JSON retains the pending queue snapshot before the generated
+fixture is torn down. [Workload controls](workload-charter.md#controls-added-for-independent-review)
+and [proposed custody policy](../adr/PROPOSED-loki-poisoned-exports.md).
 
 The HTTP listeners cap active connections at 12. Each tenant has three
 write reservations, one downstream writer and one independent reader. A

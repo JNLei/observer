@@ -208,7 +208,7 @@ func TestOTLPValidationAndDisclosure(t *testing.T) {
 			t.Fatal("store received disallowed source data")
 		}
 		res := clean.GetResourceLogs()[0]
-		if len(res.Resource.Attributes) != 1 || res.Resource.Attributes[0].GetValue().GetStringValue() != "m1-bench" || res.ScopeLogs[0].Scope != nil {
+		if len(res.Resource.Attributes) != 1 || res.Resource.Attributes[0].GetKey() != "service.name" || res.Resource.Attributes[0].GetValue().GetStringValue() != "m1-bench" || res.ScopeLogs[0].Scope != nil {
 			t.Fatal("untrusted resource or scope")
 		}
 		records := res.ScopeLogs[0].LogRecords
@@ -236,6 +236,12 @@ func TestOTLPValidationAndDisclosure(t *testing.T) {
 		if c.Admitted != 2 || c.Invalid != 2 || c.Acknowledged != 2 || c.Attempts != 1 || len(received) != 0 {
 			t.Fatalf("unexpected counters %+v", c)
 		}
+		f.request("POST", "/v1/logs", f.b, fixtureWire(t, 21), nil).want(t, 200)
+		second := <-received
+		if second.org != "b" || proto.Unmarshal(second.data, &clean) != nil ||
+			!proto.Equal(res.Resource, clean.ResourceLogs[0].Resource) {
+			t.Fatal("both tenants must use the same fixed producer fixture")
+		}
 	})
 }
 
@@ -252,17 +258,61 @@ func TestAckBoundaryAndRetry(t *testing.T) {
 				conn.Close()
 			case 3:
 				w.WriteHeader(200)
+			case 4:
+				w.WriteHeader(429)
+			case 5:
+				w.WriteHeader(503)
 			default:
 				w.WriteHeader(204)
 			}
 		})
 		raw := fixtureWire(t, 5)
-		for _, want := range []int{503, 503, 503, 200} {
+		for _, want := range []int{503, 503, 503, 503, 503, 200} {
 			f.request("POST", "/v1/logs", f.a, raw, nil).want(t, want)
 		}
 		c := f.snapshot(t)
-		if c.Admitted != 4 || c.Acknowledged != 1 || c.Unknown != 3 || c.Outstanding != 0 || c.Attempts != 4 || visits.Load() != 4 {
+		if c.Admitted != 6 || c.Acknowledged != 1 || c.Unknown != 5 || c.BadRequests != 0 || c.Outstanding != 0 || c.Attempts != 6 || visits.Load() != 6 {
 			t.Fatalf("ambiguous outcomes %+v", c)
+		}
+	})
+}
+
+func TestStoreValidationCanCommitBefore400(t *testing.T) {
+	candidates(t, func(t *testing.T, binary string) {
+		const oldest = 100000
+		var writes atomic.Int32
+		f := startFixture(t, binary, func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			var req collector.ExportLogsServiceRequest
+			if err != nil || proto.Unmarshal(body, &req) != nil {
+				w.WriteHeader(500)
+				return
+			}
+			code := http.StatusNoContent
+			for _, record := range req.ResourceLogs[0].ScopeLogs[0].LogRecords {
+				if record.TimeUnixNano < oldest {
+					code = http.StatusBadRequest
+				} else {
+					writes.Add(1)
+				}
+			}
+			w.WriteHeader(code)
+		})
+		for _, ids := range [][]int64{{1}, {1, 2}, {1, 2}} {
+			var req collector.ExportLogsServiceRequest
+			if err := proto.Unmarshal(fixtureWire(t, ids...), &req); err != nil {
+				t.Fatal(err)
+			}
+			req.ResourceLogs[0].ScopeLogs[0].LogRecords[0].TimeUnixNano = oldest - 1
+			body, err := proto.Marshal(&req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.request("POST", "/v1/logs", f.a, body, nil).want(t, 503)
+		}
+		c := f.snapshot(t)
+		if c.BadRequests != 3 || c.Unknown != 5 || c.Acknowledged != 0 || c.Invalid != 0 || c.Outstanding != 0 || writes.Load() != 2 {
+			t.Fatalf("store validation outcomes %+v, eligible writes %d", c, writes.Load())
 		}
 	})
 }
