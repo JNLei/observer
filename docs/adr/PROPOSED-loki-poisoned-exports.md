@@ -157,6 +157,10 @@ query evidence independently of unresolved record attempts.
 | 6. Replay and privacy | Bind each immutable command to verified actor, tenant, entry, digest, action and policy. Recheck grants, age, destination, capture, hold and disposal at dispatch. Try forged claims, cross-tenant commands, restricted payload access, revocation and concurrent duplicate sends. Retain unknown history and require a new authorized command naming the uncertain replay before resending. |
 | 7. Retention and restore | Start review time at transfer. Retain on legal hold. Record an idempotent disposal and preserve historical uncertainty. Restore an older backup and fence inspection, payload export and both dispatch paths on every open until current external disposition evidence is reconciled. Missing evidence or missing required bytes keeps the image inaccessible. |
 
+The seven experimental gates passed on the synthetic owner. The evidence
+report records the fault matrix, the separate receiver observations and the
+recommendation for queue-owner selection. [Experimental results](../implementation/validation-quarantine.md)
+
 ## Scenario 8 and production gates
 
 Scenario 8 is deferred. In Collector 0.165.0 the completion callback preserves

@@ -1,0 +1,1472 @@
+{
+  "epoch_ns": 1795409940000000000,
+  "host": "macOS-27.2-arm64-arm-64bit",
+  "logical_cpus": 10,
+  "gomaxprocs": 2,
+  "git_head": "f9570eccc7bf582e239b22f0050c5228fb804a0c",
+  "git_status": "",
+  "go_version": "go version go1.27.4 darwin/arm64",
+  "loki_version": "loki, version 3.7.10 (branch: release-3.7.x, revision: c792f585)\n  build user:       root@d3ca4d55ebe5\n  build date:       2026-11-13T00:20:52Z\n  go version:       go1.26.10\n  platform:         darwin/arm64\n  tags:             netgo",
+  "loki_sha256": "93a42457a30a682cecc9e6d1bd94b6abe81eb1d176b795791c6a2d811136f597",
+  "loki_config_sha256": "ee4ceab39bb279f35180b89b76c83404a8a386604c12519fb9c1fbcd9bb2cd3e",
+  "receivers": {
+    "rust": {
+      "binary_sha256": "841ae4712089db6a78f6878a00a644d45a23d6f22b7fb32db65b33d691aa1f6e",
+      "process_usage": [
+        {
+          "process": "receiver",
+          "exit_code": -9,
+          "user_cpu_s": 0.006398999999999999,
+          "system_cpu_s": 0.009401,
+          "peak_rss_bytes": 3424256,
+          "input_blocks": 0,
+          "output_blocks": 0
+        },
+        {
+          "process": "loki",
+          "exit_code": -9,
+          "user_cpu_s": 0.23870799999999998,
+          "system_cpu_s": 0.13021,
+          "peak_rss_bytes": 116965376,
+          "input_blocks": 0,
+          "output_blocks": 0
+        }
+      ],
+      "test": {
+        "exit_code": 0,
+        "transcript": [
+          "=== RUN   TestLiveReceiver",
+          "--- PASS: TestLiveReceiver (3.67s)",
+          "PASS"
+        ]
+      },
+      "observations": {
+        "all_expired": {
+          "parked_records": 2,
+          "query_rows": 0,
+          "receiver_delta": {
+            "store_ack_records": 0,
+            "store_unknown_records": 2,
+            "store_http_400_attempts": 1,
+            "store_attempts": 1,
+            "invalid_records": 0
+          },
+          "receiver_http": [
+            503
+          ]
+        },
+        "lost_replies": {
+          "explicit_replay_retries": 1,
+          "source_unknown_record_attempts": 2,
+          "store_ack_records": 3,
+          "visible_rows": 1
+        },
+        "mixed": {
+          "eligible_rows_after_park": 1,
+          "eligible_rows_before_park": 1,
+          "other_tenant_rows": 0,
+          "parking_store_ack_delta": 0,
+          "receiver_delta_before_park": {
+            "store_ack_records": 0,
+            "store_unknown_records": 4,
+            "store_http_400_attempts": 2,
+            "store_attempts": 2,
+            "invalid_records": 0
+          },
+          "receiver_http": [
+            503,
+            503
+          ],
+          "same_lane_follower_rows_after_park": 1,
+          "same_lane_follower_rows_before_park": 0,
+          "unknown_members_at_park": 2,
+          "unknown_record_attempts_at_park": 4
+        },
+        "outage": {
+          "credential_hold_survived_reopen": true,
+          "credential_http": [
+            401
+          ],
+          "injected_statuses": [
+            429,
+            503
+          ],
+          "offline_attempts": 4,
+          "offline_receiver_http_before_restart": [
+            503,
+            503,
+            503
+          ],
+          "receiver_delta": {
+            "store_ack_records": 1,
+            "store_unknown_records": 4,
+            "store_http_400_attempts": 0,
+            "store_attempts": 5,
+            "invalid_records": 0
+          },
+          "recovered_visible": 1,
+          "unknown_record_attempts": 6
+        }
+      },
+      "result": "passed"
+    },
+    "go": {
+      "binary_sha256": "080c442d0e0d5ae9f92ac233be25dcc86394bdae9eaf4e8f6e312743ecde616d",
+      "process_usage": [
+        {
+          "process": "receiver",
+          "exit_code": -9,
+          "user_cpu_s": 0.015002,
+          "system_cpu_s": 0.01308,
+          "peak_rss_bytes": 17022976,
+          "input_blocks": 0,
+          "output_blocks": 0
+        },
+        {
+          "process": "loki",
+          "exit_code": -9,
+          "user_cpu_s": 0.281227,
+          "system_cpu_s": 0.13655799999999998,
+          "peak_rss_bytes": 114589696,
+          "input_blocks": 0,
+          "output_blocks": 0
+        }
+      ],
+      "test": {
+        "exit_code": 0,
+        "transcript": [
+          "=== RUN   TestLiveReceiver",
+          "--- PASS: TestLiveReceiver (2.24s)",
+          "PASS"
+        ]
+      },
+      "observations": {
+        "all_expired": {
+          "parked_records": 2,
+          "query_rows": 0,
+          "receiver_delta": {
+            "store_ack_records": 0,
+            "store_unknown_records": 2,
+            "store_http_400_attempts": 1,
+            "store_attempts": 1,
+            "invalid_records": 0
+          },
+          "receiver_http": [
+            503
+          ]
+        },
+        "lost_replies": {
+          "explicit_replay_retries": 1,
+          "source_unknown_record_attempts": 2,
+          "store_ack_records": 3,
+          "visible_rows": 1
+        },
+        "mixed": {
+          "eligible_rows_after_park": 1,
+          "eligible_rows_before_park": 1,
+          "other_tenant_rows": 0,
+          "parking_store_ack_delta": 0,
+          "receiver_delta_before_park": {
+            "store_ack_records": 0,
+            "store_unknown_records": 4,
+            "store_http_400_attempts": 2,
+            "store_attempts": 2,
+            "invalid_records": 0
+          },
+          "receiver_http": [
+            503,
+            503
+          ],
+          "same_lane_follower_rows_after_park": 1,
+          "same_lane_follower_rows_before_park": 0,
+          "unknown_members_at_park": 2,
+          "unknown_record_attempts_at_park": 4
+        },
+        "outage": {
+          "credential_hold_survived_reopen": true,
+          "credential_http": [
+            401
+          ],
+          "injected_statuses": [
+            429,
+            503
+          ],
+          "offline_attempts": 4,
+          "offline_receiver_http_before_restart": [
+            503,
+            503,
+            503
+          ],
+          "receiver_delta": {
+            "store_ack_records": 1,
+            "store_unknown_records": 4,
+            "store_http_400_attempts": 0,
+            "store_attempts": 5,
+            "invalid_records": 0
+          },
+          "recovered_visible": 1,
+          "unknown_record_attempts": 6
+        }
+      },
+      "result": "passed"
+    }
+  },
+  "instrumentation": {
+    "bbolt": "v1.5.0",
+    "module_sum": "h1:S7GAl7Fxv12yohbwFfIbQCGDWbQbtDGPET4P/bD4lxU=",
+    "tx_sha256": "90d89027771694d486e96d723c313d6db47f0f1f82594921ccfae85a9b06e75b",
+    "instrumented_tx_sha256": "d7bf5aff601ce27b6970c30ff90aca8508371c183649fce0b8508bdd3c556730",
+    "instrumented_test_binary_sha256": "2d23d3ba6a767aee24bfbaeb699e9381f2ccf53385871be11f11f612b86581e6"
+  },
+  "queue_owner": {
+    "exit_code": 0,
+    "transcript": [
+      "=== RUN   TestScenario5TenantAndActiveLimits",
+      "--- PASS: TestScenario5TenantAndActiveLimits (0.45s)",
+      "=== RUN   TestScenario5ReservationsAndLastSlot",
+      "=== RUN   TestScenario5ReservationsAndLastSlot/entries",
+      "=== RUN   TestScenario5ReservationsAndLastSlot/bytes",
+      "--- PASS: TestScenario5ReservationsAndLastSlot (0.83s)",
+      "    --- PASS: TestScenario5ReservationsAndLastSlot/entries (0.46s)",
+      "    --- PASS: TestScenario5ReservationsAndLastSlot/bytes (0.37s)",
+      "=== RUN   TestScenario5StorageFailures",
+      "=== RUN   TestScenario5StorageFailures/transfer-staged",
+      "    capacity_test.go:141: transfer-staged: commit reconciled to active, retry charged once",
+      "=== RUN   TestScenario5StorageFailures/before-commit",
+      "    capacity_test.go:141: before-commit: commit reconciled to active, retry charged once",
+      "=== RUN   TestScenario5StorageFailures/after-commit",
+      "    capacity_test.go:141: after-commit: commit reconciled to parked, retry charged once",
+      "=== RUN   TestScenario5StorageFailures/writeMetaEIO",
+      "    capacity_test.go:141: writeMetaEIO: commit reconciled to active, retry charged once",
+      "=== RUN   TestScenario5StorageFailures/syncDataEIO",
+      "    capacity_test.go:141: syncDataEIO: commit reconciled to active, retry charged once",
+      "=== RUN   TestScenario5StorageFailures/syncMetaEIO",
+      "    capacity_test.go:141: syncMetaEIO: commit reconciled to parked, retry charged once",
+      "--- PASS: TestScenario5StorageFailures (0.98s)",
+      "    --- PASS: TestScenario5StorageFailures/transfer-staged (0.11s)",
+      "    --- PASS: TestScenario5StorageFailures/before-commit (0.15s)",
+      "    --- PASS: TestScenario5StorageFailures/after-commit (0.14s)",
+      "    --- PASS: TestScenario5StorageFailures/writeMetaEIO (0.18s)",
+      "    --- PASS: TestScenario5StorageFailures/syncDataEIO (0.22s)",
+      "    --- PASS: TestScenario5StorageFailures/syncMetaEIO (0.17s)",
+      "=== RUN   TestScenario5PhysicalFileLimit",
+      "    capacity_test.go:183: 512 KiB file limit: 11 acknowledged entries recovered, refused entry received no identity",
+      "--- PASS: TestScenario5PhysicalFileLimit (0.84s)",
+      "=== RUN   TestScenario5TenantByteAndActiveReservations",
+      "--- PASS: TestScenario5TenantByteAndActiveReservations (0.23s)",
+      "=== RUN   TestScenario1RestartCustody",
+      "=== RUN   TestScenario1RestartCustody/before-transfer",
+      "    crash_test.go:109: SIGKILL at before-transfer and during recovery; two external identities reconciled; recovered=active; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/transfer-staged",
+      "    crash_test.go:109: SIGKILL at transfer-staged and during recovery; two external identities reconciled; recovered=active; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/before-commit",
+      "    crash_test.go:109: SIGKILL at before-commit and during recovery; two external identities reconciled; recovered=active; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/after-commit",
+      "    crash_test.go:109: SIGKILL at after-commit and during recovery; two external identities reconciled; recovered=parked; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/before-receipt-delivery",
+      "    crash_test.go:109: SIGKILL at before-receipt-delivery and during recovery; two external identities reconciled; recovered=parked; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/beforeSyncDataPages",
+      "    crash_test.go:109: SIGKILL at beforeSyncDataPages and during recovery; two external identities reconciled; recovered=active; one transfer charged",
+      "=== RUN   TestScenario1RestartCustody/beforeSyncMetaPage",
+      "    crash_test.go:109: SIGKILL at beforeSyncMetaPage and during recovery; two external identities reconciled; recovered=parked; one transfer charged",
+      "--- PASS: TestScenario1RestartCustody (2.28s)",
+      "    --- PASS: TestScenario1RestartCustody/before-transfer (0.35s)",
+      "    --- PASS: TestScenario1RestartCustody/transfer-staged (0.32s)",
+      "    --- PASS: TestScenario1RestartCustody/before-commit (0.34s)",
+      "    --- PASS: TestScenario1RestartCustody/after-commit (0.30s)",
+      "    --- PASS: TestScenario1RestartCustody/before-receipt-delivery (0.32s)",
+      "    --- PASS: TestScenario1RestartCustody/beforeSyncDataPages (0.33s)",
+      "    --- PASS: TestScenario1RestartCustody/beforeSyncMetaPage (0.32s)",
+      "=== RUN   TestScenario2IdentityAndContention",
+      "--- PASS: TestScenario2IdentityAndContention (0.51s)",
+      "=== RUN   TestScenario1UnverifiableReceipt",
+      "=== RUN   TestScenario1UnverifiableReceipt/foreign-entry",
+      "=== RUN   TestScenario1UnverifiableReceipt/foreign-tenant",
+      "=== RUN   TestScenario1UnverifiableReceipt/unreadable",
+      "--- PASS: TestScenario1UnverifiableReceipt (0.51s)",
+      "    --- PASS: TestScenario1UnverifiableReceipt/foreign-entry (0.16s)",
+      "    --- PASS: TestScenario1UnverifiableReceipt/foreign-tenant (0.17s)",
+      "    --- PASS: TestScenario1UnverifiableReceipt/unreadable (0.18s)",
+      "=== RUN   TestScenario6BoundReplay",
+      "--- PASS: TestScenario6BoundReplay (0.58s)",
+      "=== RUN   TestScenario6CaptureAndEgress",
+      "--- PASS: TestScenario6CaptureAndEgress (0.20s)",
+      "=== RUN   TestScenario7HoldDisposalAndRestore",
+      "--- PASS: TestScenario7HoldDisposalAndRestore (0.77s)",
+      "=== RUN   TestScenario7IncompleteBackupRemainsFenced",
+      "--- PASS: TestScenario7IncompleteBackupRemainsFenced (0.15s)",
+      "=== RUN   TestScenario2RestoredCopyCannotRaceOwner",
+      "--- PASS: TestScenario2RestoredCopyCannotRaceOwner (0.15s)",
+      "=== RUN   TestScenario6ReplayLeaseSurvivesCrash",
+      "--- PASS: TestScenario6ReplayLeaseSurvivesCrash (0.57s)",
+      "=== RUN   TestScenario6DisposalRequiresBoundAuthority",
+      "--- PASS: TestScenario6DisposalRequiresBoundAuthority (0.35s)",
+      "=== RUN   TestScenario3KnownReplayCredentialFailure",
+      "--- PASS: TestScenario3KnownReplayCredentialFailure (0.50s)",
+      "PASS"
+    ],
+    "restart_inventories": [
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "3c98d83c641ecd7257fe09003705b2e9",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "6f0eb01ef56b2f275b522b22ec7be278",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "6f0eb01ef56b2f275b522b22ec7be278",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "CommandID": "adcbdc0964785ee435b360d479cf9a70",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409962000000000,
+                "ReviewAt": 1795413562000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "after-commit",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "3c98d83c641ecd7257fe09003705b2e9",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "6f0eb01ef56b2f275b522b22ec7be278",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "741d3e732ce0946dbe9a5a490841d0a8",
+                  "Tenant": "a",
+                  "ID": "6f0eb01ef56b2f275b522b22ec7be278",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "CommandID": "adcbdc0964785ee435b360d479cf9a70",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409962000000000,
+                "ReviewAt": 1795413562000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "a73e041795bb85cd9938f0fadcf72a50",
+                  "Tenant": "a",
+                  "ID": "8e9f5fd967230b5e6f371e063647fb3f",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "a73e041795bb85cd9938f0fadcf72a50",
+                  "Tenant": "a",
+                  "ID": "8e9f5fd967230b5e6f371e063647fb3f",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "CommandID": "753ecd865001ac64113b20c1c7eca6f7",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409961000000000,
+                "ReviewAt": 1795413561000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "a73e041795bb85cd9938f0fadcf72a50",
+                  "Tenant": "a",
+                  "ID": "ce562161764fa2477f7677b80f17e23e",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "before-commit",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "a73e041795bb85cd9938f0fadcf72a50",
+                  "Tenant": "a",
+                  "ID": "8e9f5fd967230b5e6f371e063647fb3f",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "a73e041795bb85cd9938f0fadcf72a50",
+                  "Tenant": "a",
+                  "ID": "ce562161764fa2477f7677b80f17e23e",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 2,
+                "Bytes": 142
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 2,
+              "Bytes": 142
+            },
+            "Parked": {
+              "Entries": 0,
+              "Bytes": 0
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "71b58bb9ad7332083798bd6ad64f5fd3",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "71b58bb9ad7332083798bd6ad64f5fd3",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "CommandID": "97d72280fca76327e2e69a52551a4c2c",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409962000000000,
+                "ReviewAt": 1795413562000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "d707f21faae595ec839f4f1cdb59e3b5",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "before-receipt-delivery",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "71b58bb9ad7332083798bd6ad64f5fd3",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "71b58bb9ad7332083798bd6ad64f5fd3",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "CommandID": "97d72280fca76327e2e69a52551a4c2c",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409962000000000,
+                "ReviewAt": 1795413562000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "ce755141409e53490d27b8bbecb4c42b",
+                  "Tenant": "a",
+                  "ID": "d707f21faae595ec839f4f1cdb59e3b5",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "9096fde6ec4ab4a0eb5c8f09f0123e17",
+                  "Tenant": "a",
+                  "ID": "34c2b2aaf5cc9be98b802382338e50d2",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "9096fde6ec4ab4a0eb5c8f09f0123e17",
+                  "Tenant": "a",
+                  "ID": "38e4fa4732b7c6b20ca8868dd7e893e8",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "9096fde6ec4ab4a0eb5c8f09f0123e17",
+                  "Tenant": "a",
+                  "ID": "38e4fa4732b7c6b20ca8868dd7e893e8",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "CommandID": "ce26686830c146aa3ac8e67278c43cc7",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409961000000000,
+                "ReviewAt": 1795413561000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "before-transfer",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "9096fde6ec4ab4a0eb5c8f09f0123e17",
+                  "Tenant": "a",
+                  "ID": "34c2b2aaf5cc9be98b802382338e50d2",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "9096fde6ec4ab4a0eb5c8f09f0123e17",
+                  "Tenant": "a",
+                  "ID": "38e4fa4732b7c6b20ca8868dd7e893e8",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 2,
+                "Bytes": 142
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 2,
+              "Bytes": 142
+            },
+            "Parked": {
+              "Entries": 0,
+              "Bytes": 0
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d3a31f40391cf978063b384011bda3d1",
+                  "Tenant": "a",
+                  "ID": "5831848edd01ab2ef619bca128dcafdb",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d3a31f40391cf978063b384011bda3d1",
+                  "Tenant": "a",
+                  "ID": "ffb3d980f8a5694d096d40f7c6aedb7b",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "d3a31f40391cf978063b384011bda3d1",
+                  "Tenant": "a",
+                  "ID": "ffb3d980f8a5694d096d40f7c6aedb7b",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "CommandID": "29fded42e07bb1d8b0ae16d2f79f57b8",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409962000000000,
+                "ReviewAt": 1795413562000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "beforeSyncDataPages",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d3a31f40391cf978063b384011bda3d1",
+                  "Tenant": "a",
+                  "ID": "5831848edd01ab2ef619bca128dcafdb",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d3a31f40391cf978063b384011bda3d1",
+                  "Tenant": "a",
+                  "ID": "ffb3d980f8a5694d096d40f7c6aedb7b",
+                  "Digest": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "19950bbe6cf9f7b4a3fa98ad75e5c85ef1bb9ef9c0b2e2d7eedd981773be5314",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 2,
+                "Bytes": 142
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 2,
+              "Bytes": 142
+            },
+            "Parked": {
+              "Entries": 0,
+              "Bytes": 0
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "30a6dc699c53468be302d8776cf9908b",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "30a6dc699c53468be302d8776cf9908b",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "CommandID": "d7df478a0cf446bd4a04087d74d612d6",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409963000000000,
+                "ReviewAt": 1795413563000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "f9fb4217a353b9718457b0bb1eb759d7",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "beforeSyncMetaPage",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "30a6dc699c53468be302d8776cf9908b",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "30a6dc699c53468be302d8776cf9908b",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "CommandID": "d7df478a0cf446bd4a04087d74d612d6",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409963000000000,
+                "ReviewAt": 1795413563000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "d8b8267a199f2acc6be553e974e89d4a",
+                  "Tenant": "a",
+                  "ID": "f9fb4217a353b9718457b0bb1eb759d7",
+                  "Digest": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "161961ae0d1eaec909b1adfc536718d98579b6e8e41a93086e097fcdeac8ca1d",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      },
+      {
+        "after_repeated_command": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "f5d0a3abfd10d9288c4a520fceeca5db",
+                  "Tenant": "a",
+                  "ID": "003346dfedac94f90de4beafa1ed3014",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "parked",
+              "ActiveSHA256": "",
+              "ParkedSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "Receipt": {
+                "Ref": {
+                  "Generation": "f5d0a3abfd10d9288c4a520fceeca5db",
+                  "Tenant": "a",
+                  "ID": "003346dfedac94f90de4beafa1ed3014",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "CommandID": "af5df4ef106b4a02fce4cbb6e8126f4f",
+                "Actor": "a.operator",
+                "Reason": "operator-unknown",
+                "Policy": "synthetic-logs-v1",
+                "At": 1795409961000000000,
+                "ReviewAt": 1795413561000000000,
+                "Revision": 4,
+                "UnknownMembers": 0,
+                "UnknownRecordAttempts": 0
+              }
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "f5d0a3abfd10d9288c4a520fceeca5db",
+                  "Tenant": "a",
+                  "ID": "fa2137d3c5fe2930e37653884a20c9f8",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 1,
+                "Bytes": 71
+              },
+              "Parked": {
+                "Entries": 1,
+                "Bytes": 71
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 1,
+              "Bytes": 71
+            },
+            "Parked": {
+              "Entries": 1,
+              "Bytes": 71
+            }
+          }
+        },
+        "fault": "transfer-staged",
+        "reopened": {
+          "Entries": [
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "f5d0a3abfd10d9288c4a520fceeca5db",
+                  "Tenant": "a",
+                  "ID": "003346dfedac94f90de4beafa1ed3014",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            },
+            {
+              "Oracle": {
+                "Ref": {
+                  "Generation": "f5d0a3abfd10d9288c4a520fceeca5db",
+                  "Tenant": "a",
+                  "ID": "fa2137d3c5fe2930e37653884a20c9f8",
+                  "Digest": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83"
+                },
+                "Count": 1,
+                "Size": 71
+              },
+              "State": "active",
+              "ActiveSHA256": "ad7ee9201218ded000e39d2ae3db4ddbdbf3d1262c16a41e68cdcd51c115de83",
+              "ParkedSHA256": "",
+              "Receipt": null
+            }
+          ],
+          "TenantCharges": {
+            "a": {
+              "Active": {
+                "Entries": 2,
+                "Bytes": 142
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            },
+            "b": {
+              "Active": {
+                "Entries": 0,
+                "Bytes": 0
+              },
+              "Parked": {
+                "Entries": 0,
+                "Bytes": 0
+              }
+            }
+          },
+          "GlobalCharge": {
+            "Active": {
+              "Entries": 2,
+              "Bytes": 142
+            },
+            "Parked": {
+              "Entries": 0,
+              "Bytes": 0
+            }
+          }
+        },
+        "signals": [
+          "SIGKILL",
+          "SIGKILL during recovery"
+        ]
+      }
+    ]
+  }
+}
