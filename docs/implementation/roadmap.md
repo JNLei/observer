@@ -7,6 +7,29 @@ the listed dependencies must be available before integrating a later slice.
 The complete acceptance tests apply to the finished capabilities, not merely
 to a directory, a health check, or a mock.
 
+## Current priority — Headless Backend v0.1
+
+The architecture owner authorized Rust-first product development after the
+independent review of `f2594f9361dfcd12b82ccf2d889c1efa378d4a18`. The
+controlled, fixed-load logs comparison is accepted within its tested scope.
+The first product delivery connects the M3 local authority, M4 OTLP logs and
+raw reads, and one M6 evidence operation. Full TEST-038, multi-signal work,
+recovery qualification and REC-REF-24 remain open. Standalone timed
+comparisons are paused. [Owner decision](../adr/rust-first-headless-slice.md)
+and [v0.1 contract and functional checks](headless-v0.1.md).
+
+The independent review identified two reporting corrections.
+
+1. Natural overlap is demonstrated in nine of ten hosted trials. Separate
+   probes in pair 1 Go leave completion order unresolved. The report now
+   distinguishes those observations from the joint paced probes.
+2. The offline verifier can miss changed pre-disconnect unknown counters and
+   reported recovery times, and omits reconciliation with the published
+   summary. Target an offline check against raw counters, probe timestamps
+   and the summary, with negative fixtures for both changes. The reviewer
+   independently confirmed the original counts and timings. This verifier
+   follow-up is open. [Reviewed measurements](validation-m1-reference.md)
+
 ## Decision and boundary rules
 
 - **CONFIRMED:** four logical planes, complete self-hosted headless core, local
@@ -83,8 +106,8 @@ features are enabled; their tests are not waived by the milestone sequence.
   scored recovery and language gate remains open. [Review evidence](validation-m1-logs.md)
   and [proposed custody policy](../adr/PROPOSED-loki-poisoned-exports.md).
   The [controlled logs comparison](validation-m1-reference.md) adds repeated
-  paired evidence for the 16-worker profile, with per-service Linux budgets
-  and independent verification of the raw observations.
+  paired evidence for the independently accepted 16-worker profile, with
+  per-service Linux budgets.
 
 ## M2 — Production-shaped language and recovery gate
 
@@ -110,8 +133,8 @@ features are enabled; their tests are not waived by the milestone sequence.
   trial policy; candidate store/queue and durability/lateness scopes. Record
   candidate substitutions and do not silently promote them to product choices.
 - **Status:** the M1 log trial contributes protocol, replay and visibility
-  evidence. Full multi-signal, isolation, endurance and language acceptance
-  remain open.
+  evidence. Product work proceeds on the owner's scoped Rust-first decision.
+  Full multi-signal, isolation, endurance and language acceptance remain open.
 
 ## M3 — Local identity, authorization and headless management slice
 
@@ -128,7 +151,7 @@ features are enabled; their tests are not waived by the milestone sequence.
   equivalent policy semantics across subject types; documented API-only flows.
 - **Blocking decisions:** auth model/engine, tenant identity, policy propagation,
   offline freshness and bootstrap trust root before production exposure.
-- **Status:** not started.
+- **Status:** v0.1 implements local operator bootstrap and recovery, tenant provisioning, scoped service credentials and revocation. Distributed policy and delegated identities remain open.
 
 ## M4 — Authorized telemetry admission and raw retrieval
 
@@ -147,7 +170,7 @@ features are enabled; their tests are not waived by the milestone sequence.
   behavior, direct authorized queries and worker/UI/LLM independence.
 - **Blocking decisions:** signal/adapters and backend candidate selection,
   retention/durability, capture/redaction policies and external API contract.
-- **Status:** not started.
+- **Status:** v0.1 implements bounded OTLP/HTTP logs, pre-storage capture policy, a candidate Loki adapter and tenant-authorized raw retrieval. Other signals and recovery qualification remain open.
 
 ## M5 — Recovery, ordering and isolation
 
@@ -182,7 +205,7 @@ features are enabled; their tests are not waived by the milestone sequence.
   boundaries; no evidence or resource-existence leaks across tenants.
 - **Blocking decisions:** reviewed public schemas/transport, resource identities,
   evidence retention/declassification and permitted backend query capabilities.
-- **Status:** not started.
+- **Status:** v0.1 implements a provisional external log evidence query with reauthorized record references, time coverage and source limitations. Multi-source semantics and stable contracts remain open.
 
 ## M7 — Canonical AI execution and projections
 

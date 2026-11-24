@@ -10,3 +10,8 @@ The owner approved tenant-scoped quarantine in principle. The reviewed contract 
 scenarios 1–7 with a synthetic source. Scenario 8 and production adoption
 require separate approval.
 [Custody of permanently failing Loki log exports](PROPOSED-loki-poisoned-exports.md)
+
+The owner authorized Rust-first development of the first headless logs slice
+after independent review of the controlled comparison. Full TEST-038 and
+the remaining recovery gates stay open.
+[Rust-first headless product development](rust-first-headless-slice.md)

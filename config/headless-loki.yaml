@@ -1,0 +1,74 @@
+# Single-process candidate. Start in the private state directory with run-local-loki.py.
+auth_enabled: true
+analytics:
+  reporting_enabled: false
+server:
+  http_listen_network: unix
+  http_listen_address: loki.sock
+  http_listen_port: 0
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: ${OBSERVE_LOKI_GRPC_PORT}
+  grpc_tls_config:
+    cert_file: loki.crt
+    key_file: loki.key
+    client_auth_type: RequireAndVerifyClientCert
+    client_ca_file: loki.crt
+  log_level: warn
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: ./loki
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: ./loki/chunks
+      rules_directory: ./loki/rules
+  ring:
+    kvstore:
+      store: inmemory
+ingester_client:
+  grpc_client_config: &local_tls
+    tls_enabled: true
+    tls_ca_path: loki.crt
+    tls_cert_path: loki.crt
+    tls_key_path: loki.key
+    tls_server_name: localhost
+frontend_worker:
+  query_frontend_grpc_client: *local_tls
+  query_scheduler_grpc_client: *local_tls
+frontend:
+  grpc_client_config: *local_tls
+query_scheduler:
+  grpc_client_config: *local_tls
+compactor_grpc_client: *local_tls
+ingester:
+  lifecycler:
+    min_ready_duration: 0s
+  wal:
+    enabled: true
+    dir: ./loki/wal
+schema_config:
+  configs:
+    - from: "2020-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: observe_
+        period: 24h
+limits_config:
+  retention_period: ${OBSERVE_LOKI_RETENTION}
+  query_timeout: 2s
+  reject_old_samples: true
+  reject_old_samples_max_age: 48h
+  max_entries_limit_per_query: 101
+  unordered_writes: true
+querier:
+  per_request_limits_enabled: true
+  max_concurrent: 4
+query_range:
+  cache_results: false
+  max_retries: 0
+compactor:
+  retention_enabled: true
+  delete_request_store: filesystem
+  working_directory: ./loki/compactor

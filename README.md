@@ -1,23 +1,17 @@
 # AI-native observability platform
 
-This repository contains an early repository foundation, not a working
-observability platform. The intended architecture is described by the
-[authoritative v0.5.1 specification](docs/architecture/AI_Native_Observability_Architecture_Spec_v0.5.1.md).
-The repository includes a local process-liveness endpoint and two Rust/Go
-benchmark paths. The production-shaped slice sends generated OTLP logs through
-an OpenTelemetry Collector disk queue to matched receivers and a single-node
-Loki trial. It checks acknowledgements, tenant-scoped queries, original event
-times and recovery after process restarts. A separate synthetic forwarder
-preserves the original baseline.
+Headless Backend v0.1 accepts OTLP/HTTP logs, applies tenant capture policy
+and stores authorized records in a local Loki candidate. A Rust management
+API provisions tenants and credentials. External clients can search raw logs
+and resolve evidence references through the same authorization boundary.
+The service runs locally with the default UI, agent workers and hosted
+services absent. [Local setup, API requests and acceptance tests](docs/implementation/headless-v0.1.md)
 
-The four architectural planes are logical boundaries. The eventual self-hosted
-backend must be usable without the optional UI, built-in agent, evaluation
-workers or a hosted service. Existing decision statuses and implementation
-gates are summarized in the [roadmap](docs/implementation/roadmap.md). The
-[benchmark design](docs/implementation/benchmark.md) describes the limited
-prototype, measurement accounting and unfinished production-shaped gate. The
-[initial validation record](docs/implementation/validation-2026-11-22.md)
-records the local checks and smoke observations.
+The [v0.5.1 architecture](docs/architecture/AI_Native_Observability_Architecture_Spec_v0.5.1.md)
+remains authoritative. The [roadmap](docs/implementation/roadmap.md) records
+the owner’s scoped Rust-first decision and the open language and recovery
+gates. The repository also includes the earlier liveness endpoint and
+the Rust/Go prototypes.
 
 The [16-worker logs benchmark](docs/implementation/benchmark.md#reproducing-the-controlled-log-pairs)
 has a Linux runner, a five-pair workload and an offline evidence verifier.
@@ -66,8 +60,10 @@ authenticated management API. Non-loopback listeners are rejected.
 ```
 
 The script checks formatting, Clippy, Go vet, builds, health integration,
-synthetic accounting and cross-language OTLP conformance. GitHub Actions runs
-it and the real recovery trial on Linux. The local Go race pass also exercises
+headless authorization and failure behavior, synthetic accounting and
+cross-language OTLP conformance. Push CI also runs the product test against
+pinned Loki and keeps the existing functional recovery and custody checks.
+The timed reference comparison is available by manual workflow dispatch. The local Go race pass also exercises
 the instrumented binaries through their network endpoints.
 
 ```sh
@@ -95,6 +91,7 @@ recovery scenario; see [benchmark limitations](docs/implementation/benchmark.md)
 
 ## Repository map
 
+- `backend/headless/`: Rust authority, OTLP log intake, storage adapter, raw and Evidence APIs, and external-client tests.
 - `backend/health/`: small loopback-only Rust process liveness component.
 - `benchmarks/ingest/`: matched Rust/Go synthetic forwarders, bounded workload
   generator, mock downstream, scenarios and conformance tests.

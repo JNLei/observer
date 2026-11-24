@@ -13,6 +13,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo build --locked --workspace
+python3 backend/headless/tests/test_headless.py -v AuthorityTests ControlledStore
 
 (
     cd benchmarks/ingest/go

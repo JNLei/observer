@@ -1,0 +1,24 @@
+[package]
+name = "observe-backend"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+flate2 = "1"
+getrandom = "0.3"
+hex = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2"
+opentelemetry-proto = { version = "=0.33.1", default-features = false, features = ["gen-tonic-messages", "logs", "with-serde"] }
+percent-encoding = "2"
+prost = "0.14"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

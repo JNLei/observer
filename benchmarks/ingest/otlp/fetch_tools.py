@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Install only the pinned native benchmark tools into the ignored bin directory."""
+"""Install checksum-pinned local Loki and optional Collector binaries."""
 
+import argparse
 import hashlib
 from pathlib import Path
 import platform
@@ -45,6 +46,9 @@ def install(name, url, member, expected):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--loki-only", action="store_true", help="install just the pinned Loki candidate")
+    args = parser.parse_args()
     system = platform.system().lower()
     machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
     if (system, machine) not in ARCHIVES:
@@ -54,6 +58,8 @@ if __name__ == "__main__":
     base = "https://github.com"
     member = f"loki-{system}-{machine}"
     install("loki", f"{base}/grafana/loki/releases/download/v3.7.10/{member}.zip", member, loki)
+    if args.loki_only:
+        raise SystemExit(0)
     asset = f"otelcol-contrib_0.165.0_{system}_{machine}.tar.gz"
     install("otelcol-contrib", f"{base}/open-telemetry/opentelemetry-collector-releases/releases/download/v0.165.0/{asset}",
             "otelcol-contrib", collector)

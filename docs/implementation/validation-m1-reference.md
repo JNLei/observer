@@ -5,8 +5,8 @@ for Rust and 99.99 for Go. During the 400 records/s burst they observed
 399.09 and 399.08 records/s. Every source-confirmed record matched the expected
 fields and multiplicity on both sides of Loki restart. One Rust run left 248
 records unsent at the generator. The other nine hosted runs served the full
-healthy demand. The evidence supports independent review of this logs slice.
-Milestone 1 and the language decision remain open.
+healthy demand. Independent review accepted this controlled logs slice at `f2594f93`. The
+owner authorized Rust-first product development. Full TEST-038 remains open.
 
 ## Workload and measurement boundaries
 
@@ -127,7 +127,10 @@ records. The tables retain pair 1. Restricting the comparison to pairs 2–5,
 which delivered the full healthy corpus in both variants, gives median burst
 visibility P99 of 221.8 ms for Rust and 221.5 ms for Go.
 
-Fresh data became visible before history finished in all ten natural runs.
+Nine natural runs showed incomplete history on a read taken after fresh data
+was visible. In pair 1 Go, separate probes found 52/96 historical records at
+103.6 ms, one fresh record at 106.7 ms and 96/96 historical records at
+181.3 ms. Their intervals leave the actual completion order unresolved.
 The paced controls each saw the partial historical/fresh counts advance from
 4/1 to 8/2 between successful reads. Natural fresh visibility from intended
 arrival had median trial P50/P95/P99 of 44.4/78.6/79.6 ms for Rust and
@@ -183,6 +186,12 @@ for pair in "$evidence_dir"/hosted/pair-* "$evidence_dir"/arm64-vm/pair-*; do
     python3 benchmarks/ingest/otlp/verify_reference.py "$pair" || exit 1
 done
 ```
+
+The independent reviewer reproduced the original recovery timings and zero
+observed unknowns from the raw observations. An altered pre-disconnect
+unknown-record count and a changed reported history-completion time both
+escaped the offline verifier. Comparison to the published summary and
+negative fixtures for these cases remain targeted follow-up work.
 
 ## Interpretation and remaining gates
 
