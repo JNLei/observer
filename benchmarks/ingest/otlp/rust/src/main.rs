@@ -54,6 +54,8 @@ struct Tenant {
 struct Trial {
     socket: PathBuf,
     tenants: [Arc<Tenant>; 2],
+    workers: Arc<Semaphore>,
+    worker_limit: usize,
 }
 
 fn response(code: u16, kind: &str, bytes: impl Into<Bytes>) -> Reply {
@@ -166,6 +168,11 @@ async fn ingest(req: Request<Incoming>, tenant: Arc<Tenant>, trial: Arc<Trial>) 
         tenant.counts.lock().unwrap().overloads += 1;
         return failure(429);
     };
+    let Ok(worker) = trial.workers.clone().try_acquire_owned() else {
+        tenant.counts.lock().unwrap().overloads += 1;
+        return failure(429);
+    };
+    let reservations = (slot, worker);
     let wire = match timeout(
         IO_TIME,
         Limited::new(req.into_body(), logs::BYTE_LIMIT).collect(),
@@ -178,9 +185,10 @@ async fn ingest(req: Request<Incoming>, tenant: Arc<Tenant>, trial: Arc<Trial>) 
         Ok(Ok(body)) => body.to_bytes(),
     };
     let input_bytes = wire.len();
-    let decoded = tokio::task::spawn_blocking(move || (slot, logs::prepare(&wire, gzip))).await;
-    let (slot, batch) = match decoded {
-        Ok((slot, Ok(batch))) => (slot, batch),
+    let decoded =
+        tokio::task::spawn_blocking(move || (reservations, logs::prepare(&wire, gzip))).await;
+    let (reservations, batch) = match decoded {
+        Ok((reservations, Ok(batch))) => (reservations, batch),
         Ok((_, Err(code))) => return failure(code),
         Err(_) => return failure(503),
     };
@@ -200,7 +208,7 @@ async fn ingest(req: Request<Incoming>, tenant: Arc<Tenant>, trial: Arc<Trial>) 
     // The transaction owns its slot through the downstream outcome, even if the client leaves.
     let rejected = batch.rejected;
     let work = tokio::spawn(async move {
-        let _slot = slot;
+        let _reservations = reservations;
         let _active = tenant.writer.acquire().await.unwrap();
         tenant.counts.lock().unwrap().attempts += 1;
         let size = batch.wire.len();
@@ -268,7 +276,9 @@ async fn handle(req: Request<Incoming>, trial: Arc<Trial>) -> Reply {
                 "store_unknown_records": c.unknown,
                 "store_http_400_attempts": c.store_http_400_attempts,
                 "outstanding_records": c.admitted - c.acknowledged - c.unknown,
-                "overloaded_requests": c.overloads
+                "overloaded_requests": c.overloads,
+                "worker_limit": trial.worker_limit,
+                "workers_busy": trial.worker_limit - trial.workers.available_permits()
             });
             response(200, "application/json", snapshot.to_string())
         }
@@ -297,7 +307,12 @@ async fn handle(req: Request<Incoming>, trial: Arc<Trial>) -> Reply {
     }
 }
 
-fn tenant(name: &'static str, key: &str) -> Result<Arc<Tenant>, AnyError> {
+fn tenant(
+    name: &'static str,
+    key: &str,
+    writes: usize,
+    writers: usize,
+) -> Result<Arc<Tenant>, AnyError> {
     let token = env::var(key)?;
     if token.len() != 64
         || !token
@@ -309,30 +324,41 @@ fn tenant(name: &'static str, key: &str) -> Result<Arc<Tenant>, AnyError> {
     Ok(Arc::new(Tenant {
         name,
         credential: format!("Bearer {token}"),
-        writes: Arc::new(Semaphore::new(3)),
-        writer: Semaphore::new(1),
+        writes: Arc::new(Semaphore::new(writes)),
+        writer: Semaphore::new(writers),
         reader: Arc::new(Semaphore::new(1)),
         counts: Mutex::default(),
     }))
 }
 
 fn main() -> Result<(), AnyError> {
+    let (workers, writes, writers, decoders, connections) =
+        match env::var("OBS_BENCH_PROFILE").as_deref() {
+            Err(env::VarError::NotPresent) | Ok("") => (6, 3, 1, 2, 12),
+            Ok("reference16") => (16, 16, 16, 4, 32),
+            _ => return Err("invalid trial profile".into()),
+        };
     tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .max_blocking_threads(2)
+        .worker_threads(decoders)
+        .max_blocking_threads(decoders)
         .enable_all()
         .build()?
-        .block_on(serve())
+        .block_on(serve(workers, writes, writers, connections))
 }
 
-async fn serve() -> Result<(), AnyError> {
+async fn serve(
+    worker_limit: usize,
+    writes: usize,
+    writers: usize,
+    connections: usize,
+) -> Result<(), AnyError> {
     let addr: SocketAddr = env::var("OBS_BENCH_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:0".into())
         .parse()?;
     let socket = PathBuf::from(env::var("OBS_BENCH_LOKI_SOCKET")?);
     let tenants = [
-        tenant("a", "OBS_BENCH_TOKEN_A")?,
-        tenant("b", "OBS_BENCH_TOKEN_B")?,
+        tenant("a", "OBS_BENCH_TOKEN_A", writes, writers)?,
+        tenant("b", "OBS_BENCH_TOKEN_B", writes, writers)?,
     ];
     if !addr.ip().is_loopback()
         || !socket.is_absolute()
@@ -340,9 +366,14 @@ async fn serve() -> Result<(), AnyError> {
     {
         return Err("invalid trial configuration".into());
     }
-    let trial = Arc::new(Trial { socket, tenants });
+    let trial = Arc::new(Trial {
+        socket,
+        tenants,
+        worker_limit,
+        workers: Arc::new(Semaphore::new(worker_limit)),
+    });
     let listener = TcpListener::bind(addr).await?;
-    let connections = Arc::new(Semaphore::new(12));
+    let connections = Arc::new(Semaphore::new(connections));
     println!("LISTENING {}", listener.local_addr()?);
     loop {
         let permit = connections.clone().acquire_owned().await?;

@@ -114,3 +114,61 @@ owner approval. Full TEST-038 also requires a reviewed decision record.
 Traceability includes REQ-008, 025–029, 035–039, ADR-I1/I2/I4/I5,
 ADR-REC-01–06, ADR-LANG-01, ADR-BENCH-01, TEST-029–030, 032–038, 043–045,
 051, 054–055 and architecture §§23–26.
+
+## Controlled 16-worker logs profile
+
+This profile fixes experimental inputs for five paired observations. Numerical
+release SLOs, cost ceilings and language selection remain deferred. Each pair
+uses one Linux machine, one receiver at a time, and new processes, credentials
+and empty filesystems for each variant. Seed 1 shuffles a counterbalanced
+starting order. A matrix can place different pairs on different machines.
+Comparisons therefore use the within-pair observations. Host caches and VM
+scheduling remain shared. The short engineering check uses the same topology.
+
+| Component | Enforced budget for each variant |
+| --- | --- |
+| Receiver | 4 CPU quota, 1 GiB memory, zero swap. Up to 16 application workers globally from authenticated write admission through downstream disposition, including client disconnect. Both tenants share the ceiling. Each allows up to 16 concurrent writes and one independent read. 32 connections, 4 concurrent decodes, 64 KiB wire/inflated and 256 records per request. Tokio has 4 runtime and up to 4 blocking threads. Go uses GOMAXPROCS=4 and GOGC=100. |
+| Stock Collector Contrib 0.165.0 | 2 CPU, 2 GiB, zero swap. Separate 1 GiB ext4 image, 50 MiB/s reads and 50 MiB/s writes on its loop block device. Source-owned fsync queues retain 24 history requests with one consumer and 64 live requests with 16 consumers. Retries use the existing backoff configuration. |
+| Single-node Loki 3.7.10 | 2 CPU, 2 GiB, zero swap. Its own 1 GiB ext4 image and the same block limits. The existing schema, WAL, store ACK, Unix socket, fixed query selector, two query slots and 512-row read bound apply. Both Go dependencies use GOMAXPROCS=2, GOGC=100. |
+| Driver, probes and sampler | 1 CPU, 1 GiB, zero swap. Eight source senders and at most 32 further submitted exchanges. All TCP traffic shares a private 100 Mbit/s loopback qdisc. The local Unix store transport bypasses that qdisc. CPU quotas are ceilings on the shared machine. The OS/runtime thread count is sampled separately. |
+
+Use monotonic open-loop arrivals. Generate the established synthetic body,
+severity, identity and trace/span fields. The source accepts OTLP JSON and
+sends gzip OTLP protobuf. A healthy run offers four-record batches at 100
+records/s for 600 seconds, 400/s for 60 seconds, then 100/s for 10 seconds.
+This gives 85,000 records in 21,250 requests. The quick check uses 5, 2 and 2
+seconds respectively. The schedule continues under pressure. Record unsent
+demand, source refusals, timeouts, ambiguous attempts and outstanding work.
+Each case anchors event times near its own wall clock so live events remain
+fresh across sequential trials. Archived anchors and offsets reproduce each
+exact corpus. IDs, sizes, cadence and relative ages match across variants.
+
+After healthy traffic drains, take the receiver offline for at least three
+seconds. Offer 24 four-record historical exports, one per simulated hour of
+the preceding day, at 10 requests/s. With all 24 queued, offer eight disjoint
+single-record overflow probes and correlate their explicit refusals with the
+Collector enqueue-failure counter. Start the receiver and send 24 fresh
+single-record exports at 10/s. Observe natural catch-up with the ordinary
+transport. Repeat just the outage/replay on fresh data directories with the
+existing 150 ms history-only relay. Start fresh offers after the first history
+prefix and require two partial reads showing both classes advance. Report
+natural and paced timings separately.
+
+Sample resource and queue counters every 0.5 seconds plus scrape time.
+Probe the active load window every 0.2 seconds plus query time and record
+individual first observations. Record the natural and paced progress curves,
+first fresh, history completion, longest observed gap for both classes, and
+queue/counter drain. Visibility times are upper bounds. Run a separate full
+multiset scan before and after a Loki SIGKILL on intact storage. Shard by
+event time with at most 256 expected records per read. A capped result fails
+verification. Check the other credential across the entire event window.
+Retain every returned settled/restored row, offered identity, disposition,
+timing, failed query, resource sample, build hash and limit readback.
+
+Integrity checks require one visible copy of each source-confirmed record,
+the original fields, no cross-tenant rows, and agreement with the explicit
+pressure dispositions. Report generator or queue saturation as measured
+outcomes and flag any phase with incomplete demand. This fixture uses
+24 event-time hours. Wall-clock REC-REF-24, adaptive admission, cold/warm cache
+experiments and scored language acceptance remain open. The stock Collector
+restart concern and the synthetic custody review retain their separate gates.

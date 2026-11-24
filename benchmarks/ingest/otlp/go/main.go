@@ -50,6 +50,7 @@ type trial struct {
 	client   *http.Client
 	tenants  [2]*tenant
 	decoders chan struct{}
+	workers  chan struct{}
 }
 
 func reply(w http.ResponseWriter, code int, kind string, data []byte) {
@@ -124,6 +125,17 @@ func (t *trial) ingest(w http.ResponseWriter, r *http.Request, u *tenant) {
 	select {
 	case u.writes <- struct{}{}:
 		defer func() { <-u.writes }()
+	default:
+		u.mu.Lock()
+		u.counts.Overloads++
+		u.mu.Unlock()
+		failure(w, 429)
+		return
+	}
+	// An application worker owns this request through its final store disposition.
+	select {
+	case t.workers <- struct{}{}:
+		defer func() { <-t.workers }()
 	default:
 		u.mu.Lock()
 		u.counts.Overloads++
@@ -216,7 +228,11 @@ func (t *trial) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		c := u.counts
 		u.mu.Unlock()
 		c.Outstanding = c.Admitted - c.Acknowledged - c.Unknown
-		data, _ := json.Marshal(c)
+		data, _ := json.Marshal(struct {
+			counts
+			WorkerLimit int `json:"worker_limit"`
+			WorkersBusy int `json:"workers_busy"`
+		}{c, cap(t.workers), len(t.workers)})
 		reply(w, 200, "application/json", data)
 	case r.Method == "GET" && r.URL.EscapedPath() == "/bench/v1/logs":
 		path, ok := queryPath(r.URL.RawQuery)
@@ -252,13 +268,21 @@ func run() error {
 	if err != nil || !ep.Addr().IsLoopback() || !filepath.IsAbs(socket) {
 		return errors.New("invalid trial configuration")
 	}
-	t := trial{decoders: make(chan struct{}, 2)}
+	workers, writes, writers, decoders, connections := 6, 3, 1, 2, 12
+	switch os.Getenv("OBS_BENCH_PROFILE") {
+	case "":
+	case "reference16":
+		workers, writes, writers, decoders, connections = 16, 16, 16, 4, 32
+	default:
+		return errors.New("invalid trial profile")
+	}
+	t := trial{decoders: make(chan struct{}, decoders), workers: make(chan struct{}, workers)}
 	for i, name := range []string{"a", "b"} {
 		token := os.Getenv("OBS_BENCH_TOKEN_" + strings.ToUpper(name))
 		if len(token) != 64 || strings.Trim(token, "0123456789abcdef") != "" {
 			return errors.New("invalid trial credential")
 		}
-		t.tenants[i] = &tenant{name: name, credential: "Bearer " + token, writes: make(chan struct{}, 3), writer: make(chan struct{}, 1), reader: make(chan struct{}, 1)}
+		t.tenants[i] = &tenant{name: name, credential: "Bearer " + token, writes: make(chan struct{}, writes), writer: make(chan struct{}, writers), reader: make(chan struct{}, 1)}
 	}
 	if t.tenants[0].credential == t.tenants[1].credential {
 		return errors.New("invalid trial configuration")
@@ -277,7 +301,7 @@ func run() error {
 	server := http.Server{Handler: &t, ReadHeaderTimeout: ioTime, ReadTimeout: 2 * ioTime, WriteTimeout: 9 * time.Second, MaxHeaderBytes: 8192}
 	server.SetKeepAlivesEnabled(false)
 	fmt.Println("LISTENING", listener.Addr())
-	return server.Serve(netutil.LimitListener(listener, 12))
+	return server.Serve(netutil.LimitListener(listener, connections))
 }
 func main() {
 	if err := run(); err != nil {

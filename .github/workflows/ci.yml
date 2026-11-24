@@ -4,11 +4,50 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      full_reference:
+        description: Run all five full-duration controlled log pairs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJSON(inputs.full_reference && '[1,2,3,4,5]' || '[1]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Run matched receivers sequentially on this runner
+        env:
+          FULL_REFERENCE: ${{ inputs.full_reference }}
+          PAIR: ${{ matrix.pair }}
+        run: |
+          if [ "$FULL_REFERENCE" = true ]; then
+            ./scripts/bench-reference.sh --pair "$PAIR"
+          else
+            ./scripts/bench-reference.sh --pair "$PAIR" --quick
+          fi
+      - name: Preserve raw trial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-reference-${{ github.run_id }}-pair-${{ matrix.pair }}
+          path: benchmarks/ingest/results/reference.*/run/
+          retention-days: 30
+          if-no-files-found: error
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15

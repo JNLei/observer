@@ -240,3 +240,35 @@ The wall-clock REC-REF-24 endurance run is **unrun**.
 No pass/fail or release-readiness claim can be made without the approved charter,
 production-shaped implementations, end-to-end reconciliation, full recovery
 suite and an architecture-reviewed language decision record.
+
+## Reproducing the controlled log pairs
+
+Run `./scripts/bench-reference.sh` on a disposable Linux host with cgroup v2,
+systemd, passwordless sudo, four available logical CPUs, iproute2, util-linux,
+e2fsprogs, and the pinned build tools. Each variant gets a new delegated scope,
+private mount/network namespaces and two disposable ext4 loop devices. Only
+namespace and resource setup uses root. The driver and services run as the
+invoking non-root account. Missing controls or incorrect process membership
+fail the run. The kernel can temporarily burst above an I/O rate limit.
+[Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
+
+Use `--pair 1` through `--pair 5` to distribute whole pairs. Add `--quick`
+for the short engineering check. Push CI runs a quick pair. Dispatch the
+Foundation checks workflow with `full_reference=true` to run all five full
+pairs. The runner prints its evidence directory. Run
+`python3 benchmarks/ingest/otlp/verify_reference.py <run-directory>` on an
+unpacked artifact to recompute the input plan, check the SHA-256 inventory,
+verify applied quotas and charged disk writes, and compare every archived
+settled/restored row with its independent field and multiplicity oracle.
+
+The manifest records execution order, build, commit and hashes. Under each
+pair and language, `controls.json` records kernel readbacks and
+`result.json` records dispositions, timings, progress and resource usage.
+The natural and paced gzip JSONL journals contain the exact plan, source HTTP
+outcomes, monotonic nanoseconds, query windows and answers, raw Collector
+series, receiver counter snapshots and cgroup samples. Missing series are
+null. Query and source tail distributions use nearest rank for successful
+observations. The source-ACK boundary is successful Collector enqueue.
+Receiver ACK bytes count sanitized protobuf with a Loki 204. Visibility uses
+authorized reads. The archive can establish visible multiplicity only.
+[Controlled workload](workload-charter.md#controlled-16-worker-logs-profile)

@@ -288,6 +288,46 @@ func TestOTLPValidationAndDisclosure(t *testing.T) {
 	})
 }
 
+func TestReferenceWorkers(t *testing.T) {
+	t.Setenv("OBS_BENCH_PROFILE", "reference16")
+	candidates(t, func(t *testing.T, binary string) {
+		entered, release := make(chan struct{}, 16), make(chan struct{})
+		f := startFixture(t, binary, func(w http.ResponseWriter, r *http.Request) {
+			entered <- struct{}{}
+			<-release
+			w.WriteHeader(204)
+		})
+		t.Cleanup(func() { close(release) })
+		replies := make(chan observation, 16)
+		wire := fixtureWire(t, 1)
+		for i := 0; i < 16; i++ {
+			go func() { replies <- f.request("POST", "/v1/logs", f.a, wire, nil) }()
+		}
+		deadline := time.After(1500 * time.Millisecond)
+		for i := 0; i < 16; i++ {
+			select {
+			case <-entered:
+			case <-deadline:
+				t.Fatalf("only %d concurrent store writes reached the sink", i)
+			}
+		}
+		var usage struct {
+			Limit int `json:"worker_limit"`
+			Busy  int `json:"workers_busy"`
+		}
+		if json.Unmarshal(f.request("GET", "/bench/v1/counts", f.a, nil, nil).want(t, 200), &usage) != nil || usage.Limit != 16 || usage.Busy != 16 {
+			t.Fatalf("incorrect worker accounting %+v", usage)
+		}
+		f.request("POST", "/v1/logs", f.b, wire, nil).want(t, 429)
+		for i := 0; i < 16; i++ {
+			release <- struct{}{}
+		}
+		for i := 0; i < 16; i++ {
+			(<-replies).want(t, 200)
+		}
+	})
+}
+
 func TestAckBoundaryAndRetry(t *testing.T) {
 	candidates(t, func(t *testing.T, binary string) {
 		var visits atomic.Int32
