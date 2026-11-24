@@ -107,7 +107,7 @@ def verify(folder):
     phases = PHASES if manifest["profile"] == "reference" else QUICK_PHASES
     require(manifest["phases"] == [list(p) for p in phases], "phase plan mismatch")
     for entry in (folder/"SHA256SUMS").read_text().splitlines():
-        expected, name = entry.split("  ", 1)
+        expected, name = entry.split(maxsplit=1)
         path = (folder/name).resolve()
         require(path.is_relative_to(folder.resolve()) and digest(path) == expected, "artifact checksum mismatch")
     audit = {}

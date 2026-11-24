@@ -68,7 +68,7 @@ def main():
     with (folder/"SHA256SUMS").open("x") as f:
         for path in paths:
             if path.is_file():
-                print(digest(path), " ", path.relative_to(folder), sep="", file=f)
+                f.write(f"{digest(path)}  {path.relative_to(folder)}\n")
     return int(failed)
 
 
