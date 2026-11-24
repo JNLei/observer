@@ -82,6 +82,9 @@ features are enabled; their tests are not waived by the milestone sequence.
   Its handoff contract and implementation still require review. The full
   scored recovery and language gate remains open. [Review evidence](validation-m1-logs.md)
   and [proposed custody policy](../adr/PROPOSED-loki-poisoned-exports.md).
+  The [controlled logs comparison](validation-m1-reference.md) adds repeated
+  paired evidence for the 16-worker profile, with per-service Linux budgets
+  and independent verification of the raw observations.
 
 ## M2 — Production-shaped language and recovery gate
 

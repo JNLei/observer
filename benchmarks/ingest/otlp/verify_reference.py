@@ -4,12 +4,13 @@ from collections import Counter, defaultdict
 from dataclasses import asdict
 import gzip
 import json
+import lzma
 from pathlib import Path
 import sys
 
 from linux_budget import BANDWIDTH, BUDGETS, GIB
-from recovery import digest, distribution, require
-from reference_load import NS, PHASES, QUICK_PHASES, load_plan, recovery_plan
+from recovery import digest, distribution, overlap_witness, require
+from reference_load import NS, PHASES, QUICK_PHASES, load_plan, recovery_plan, summarize
 from reference import order
 
 
@@ -44,7 +45,13 @@ def verify_case(directory, result, phases):
     visible = {k: Counter() for k in ("settled", "restored")}
     latencies, query_errors = defaultdict(list), Counter()
     receiver_samples = defaultdict(list)
-    with gzip.open(directory/"events.jsonl.gz", "rt") as f:
+    first_seen, progress = {}, []
+    history_ids = {i for b in history for i in range(b.first, b.first+b.count)}
+    fresh_ids = {b.first for b in fresh}
+    # The long-lived review archive losslessly recompresses the hosted JSONL streams.
+    raw = directory/"events.jsonl.gz"
+    stream = gzip.open(raw, "rt") if raw.exists() else lzma.open(directory/"events.jsonl.xz", "rt")
+    with stream as f:
         for line in f:
             e = json.loads(line)
             kind = e.pop("kind")
@@ -74,6 +81,14 @@ def verify_case(directory, result, phases):
                         visible[purpose][seq] += 1
                 elif purpose == "tenant_b":
                     require(e["rows"] == [], "cross-tenant read")
+                else:
+                    observed = set(e["ids"])
+                    require(len(observed) == len(e["ids"]) and observed <= ids.keys(), "invalid progress IDs")
+                    for i in observed:
+                        first_seen.setdefault(i, e["end_ns"])
+                    if purpose == "recovery_progress":
+                        progress.append({"elapsed_ms": e["end_ns"]/1e6, "history_unique": len(observed & history_ids),
+                                         "live_unique": len(observed & fresh_ids)})
     require(planned == plan.keys() == source.keys(), "incomplete demand accounting")
     accepted = Counter(i for b in batches if source[b.first]["outcome"] == "source_ack"
                        for i in range(b.first, b.first+b.count))
@@ -86,8 +101,14 @@ def verify_case(directory, result, phases):
     require(totals == Counter(result["source_outcome_records"]) and
             not (set(totals)-{"source_ack", "queue_full", "unsent"}), "source accounting mismatch")
     require(all(source[b.first]["outcome"] == "source_ack" for b in history+fresh), "incomplete recovery corpus")
+    if directory.name == "paced":
+        overlap_witness(progress, len(history_ids), len(fresh_ids))
     rates = {}
-    for phase, _, _ in phases if load else ():
+    for phase, seconds, _ in (phases if load else ()):
+        part = [b for b in load if b.phase == phase]
+        start = source[part[0].first]["intended_ns"]
+        require(summarize(part, source, first_seen, start, seconds) == result["load"][phase],
+                phase + " raw demand, latency or rate disagrees with result")
         samples = receiver_samples[phase]
         if len(samples) >= 2:
             t0, c0 = samples[0]

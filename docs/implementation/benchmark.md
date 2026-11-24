@@ -272,3 +272,8 @@ observations. The source-ACK boundary is successful Collector enqueue.
 Receiver ACK bytes count sanitized protobuf with a Loki 204. Visibility uses
 authorized reads. The archive can establish visible multiplicity only.
 [Controlled workload](workload-charter.md#controlled-16-worker-logs-profile)
+
+The [validation record](validation-m1-reference.md) includes the full
+measurements and a permanent archive of the JSONL streams in XZ format.
+The verifier reads either encoding and reconstructs the reported phase rates
+and latency percentiles from individual requests and visibility probes.

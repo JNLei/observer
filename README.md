@@ -19,6 +19,11 @@ prototype, measurement accounting and unfinished production-shaped gate. The
 [initial validation record](docs/implementation/validation-2026-11-22.md)
 records the local checks and smoke observations.
 
+The [16-worker logs benchmark](docs/implementation/benchmark.md#reproducing-the-controlled-log-pairs)
+has a Linux runner, a five-pair workload and an offline evidence verifier.
+The [validation record](docs/implementation/validation-m1-reference.md)
+reports sustained ingestion, queue pressure and replay observations.
+
 ## Local requirements
 
 - Rust **1.100.0**, including `rustfmt` and `clippy`; `rust-toolchain.toml`

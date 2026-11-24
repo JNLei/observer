@@ -75,6 +75,9 @@ class ReferenceProfile(unittest.TestCase):
                     for b in batches:
                         add("plan", **asdict(b))
                         add("source", first=b.first, outcome="queue_full" if b in overflow and fault != "refusal" else "source_ack")
+                    for i in (1, 2):
+                        add("query", purpose="recovery_progress", status=200, start_ns=i*10, end_ns=i*10+1,
+                            ids=list(range(1, i*4+1))+[b.first for b in fresh[:i]])
                     add("query", purpose="settled", status=200, start_ns=1, end_ns=2, rows=rows)
                     restored = [list(row) for row in rows]
                     if fault == "duplicate":
