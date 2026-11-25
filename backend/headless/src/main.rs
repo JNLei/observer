@@ -2,9 +2,11 @@
 mod admission;
 mod api;
 mod authority;
+mod delivery;
 mod logs;
 mod otlp_json;
 mod query;
+mod spool;
 mod storage;
 
 use authority::Authority;
@@ -16,6 +18,7 @@ use tokio::net::TcpListener;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Error {
     Invalid,
+    Expired,
     Unauthenticated,
     Denied,
     Missing,
@@ -79,6 +82,7 @@ fn run() -> Result<()> {
     }
     let app = Arc::new(api::App::new(
         auth,
+        spool::Spool::open(&dir)?,
         Arc::new(storage::Loki(dir.join("loki.sock:0"))),
     ));
     tokio::runtime::Builder::new_multi_thread()
@@ -88,6 +92,7 @@ fn run() -> Result<()> {
         .build()?
         .block_on(async {
             let listener = TcpListener::bind(addr).await?;
+            tokio::spawn(delivery::recover(app.clone()));
             println!("LISTENING {}", listener.local_addr()?);
             api::serve(listener, app).await
         })

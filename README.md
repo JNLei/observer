@@ -1,11 +1,6 @@
 # AI-native observability platform
 
-Headless Backend v0.1 accepts OTLP/HTTP logs, applies tenant capture policy
-and stores authorized records in a local Loki candidate. A Rust management
-API provisions tenants and credentials. External clients can search raw logs
-and resolve evidence references through the same authorization boundary.
-The service runs locally with the default UI, agent workers and hosted
-services absent. [Local setup, API requests and acceptance tests](docs/implementation/headless-v0.1.md)
+Headless Backend v0.2 accepts authenticated OTLP/HTTP logs, applies tenant capture policy and commits them to a bounded local buffer. The backend replays eligible logs after a process restart or Loki outage. Producer success requires Loki 204. External clients can inspect tenant delivery counts, search raw logs and resolve evidence references. [Local setup and recovery tests](docs/implementation/headless-v0.2.md) and [API examples](docs/implementation/headless-v0.1.md#bootstrap-and-provision-two-tenants).
 
 The [v0.5.1 architecture](docs/architecture/AI_Native_Observability_Architecture_Spec_v0.5.1.md)
 remains authoritative. The [roadmap](docs/implementation/roadmap.md) records

@@ -66,6 +66,7 @@ jobs:
         run: |
           python3 benchmarks/ingest/otlp/fetch_tools.py
           python3 backend/headless/tests/test_headless.py -v RealLoki
+          python3 backend/headless/tests/test_recovery.py -v Custody
       - name: Exercise race-instrumented receivers
         run: ./scripts/check-race.sh
       - name: Run the synthetic smoke

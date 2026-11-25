@@ -1,6 +1,6 @@
 [package]
 name = "observe-backend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 
@@ -12,6 +12,7 @@ flate2 = "1"
 getrandom = "0.3"
 hex = "0.4"
 http-body-util = "0.1"
+httpdate = "1"
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 libc = "0.2"

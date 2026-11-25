@@ -1,8 +1,10 @@
 use crate::{
     admission::Lane,
     authority::{Action, Authority, Key},
+    delivery,
     logs::{now_ns, prepare, BYTE_LIMIT},
     query::{self, Query},
+    spool::{blocking, Outcome, Spool},
     storage::{LogStore, StoreError},
     Error, Result,
 };
@@ -31,16 +33,18 @@ const JSON: &str = "application/json";
 type Reply = Response<Full<Bytes>>;
 
 pub struct App {
-    authority: Authority,
-    store: Arc<dyn LogStore>,
+    pub(crate) authority: Arc<Authority>,
+    pub(crate) spool: Arc<Spool>,
+    pub(crate) store: Arc<dyn LogStore>,
     writes: Arc<Lane>,
     reads: Arc<Lane>,
     decoders: Arc<Semaphore>,
 }
 impl App {
-    pub fn new(authority: Authority, store: Arc<dyn LogStore>) -> Self {
+    pub fn new(authority: Authority, spool: Arc<Spool>, store: Arc<dyn LogStore>) -> Self {
         Self {
-            authority,
+            authority: Arc::new(authority),
+            spool,
             store,
             writes: Lane::new(8, 2),
             reads: Lane::new(4, 1),
@@ -51,7 +55,7 @@ impl App {
 impl Error {
     fn response(self) -> (u16, &'static str) {
         match self {
-            Self::Invalid => (400, "invalid_request"),
+            Self::Invalid | Self::Expired => (400, "invalid_request"),
             Self::Unauthenticated => (401, "denied"),
             Self::Denied => (403, "denied"),
             Self::Missing => (404, "not_found"),
@@ -193,7 +197,7 @@ fn counts(
 
 async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) -> Result<Reply> {
     let grant = app.authority.authorize(&key, None, Action::Ingest)?;
-    let mut slot = app.writes.enter(grant.tenant())?;
+    let slot = app.writes.enter(grant.tenant())?;
     if !single(req.headers(), "content-type")?
         .is_some_and(|v| v.eq_ignore_ascii_case(PROTO) || v.eq_ignore_ascii_case(JSON))
     {
@@ -213,6 +217,7 @@ async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) 
         .map_err(|_| Error::Busy)?;
     // The task owns the reservation even if its HTTP caller disconnects during decode or storage I/O.
     let job = tokio::spawn(async move {
+        let _slot = slot;
         let mut batch = tokio::task::spawn_blocking(move || {
             let _decoder = decoder;
             prepare(&raw, gzip, is_json, &grant)
@@ -233,28 +238,37 @@ async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) 
             };
             return Ok(counts(resp, 0, rejected, 0, 0));
         }
-        match app.store.write(&grant, &batch.records).await {
-            Ok(()) => Ok(counts(otlp_ok(rejected, is_json), n, rejected, 0, 0)),
-            Err(StoreError::Offline | StoreError::Deadline) => Ok(counts(
-                otlp_error(Error::Unavailable, is_json),
-                0,
-                rejected,
-                0,
-                n,
-            )),
-            Err(e) => {
-                if e == StoreError::Indeterminate {
-                    slot.retain();
-                }
-                Ok(counts(
-                    otlp_error(Error::Unavailable, is_json),
-                    0,
-                    rejected,
-                    n,
-                    0,
-                ))
+        let worker = app.clone();
+        let admitted = blocking(move || {
+            worker
+                .authority
+                .with_writer(grant.tenant(), &grant.subject, |current| {
+                    worker.spool.admit(current, batch.records)
+                })
+        })
+        .await;
+        let entry = match admitted {
+            Ok(entry) => entry,
+            Err(Error::Busy) => {
+                let mut resp = counts(otlp_error(Error::Busy, is_json), 0, rejected, 0, n);
+                resp.headers_mut()
+                    .insert("x-observe-durable-records", 0.into());
+                return Ok(resp);
             }
-        }
+            Err(e) => return Err(e),
+        };
+        let mut resp = match delivery::send(app, entry, false).await {
+            Ok(Outcome::Ack) => counts(otlp_ok(rejected, is_json), n, rejected, 0, 0),
+            Ok(Outcome::Offline | Outcome::Held(_)) => {
+                counts(otlp_error(Error::Unavailable, is_json), 0, rejected, 0, n)
+            }
+            Ok(Outcome::Unknown(_) | Outcome::DestinationDenied | Outcome::LostReply) | Err(_) => {
+                counts(otlp_error(Error::Unavailable, is_json), 0, rejected, n, 0)
+            }
+        };
+        resp.headers_mut()
+            .insert("x-observe-durable-records", n.into());
+        Ok(resp)
     });
     job.await.map_err(|_| Error::Internal)?
 }
@@ -339,6 +353,18 @@ async fn api(app: Arc<App>, req: Request<Incoming>, started: Instant) -> Result<
         (&Method::DELETE, ["api", "v1", "tenants", tenant, "credentials", id]) => {
             app.authority.revoke(&key, tenant, id)?;
             Ok(reply(204, JSON, Bytes::new()))
+        }
+        (&Method::GET, ["api", "v1", "tenants", tenant, "logs", "delivery"]) => {
+            let grant = app.authority.authorize(&key, Some(tenant), Action::Query)?;
+            let spool = app.spool.clone();
+            let slot = app.reads.enter(grant.tenant())?;
+            let status = blocking(move || {
+                let _slot = slot;
+                spool.status(grant.tenant())
+            })
+            .await?;
+            app.authority.authorize(&key, Some(tenant), Action::Query)?;
+            Ok(json_reply(200, status))
         }
         (&Method::POST, ["api", "v1", "tenants", tenant, family, "query"])
             if matches!(*family, "logs" | "evidence") =>

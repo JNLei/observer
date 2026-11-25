@@ -7,7 +7,11 @@ the listed dependencies must be available before integrating a later slice.
 The complete acceptance tests apply to the finished capabilities, not merely
 to a directory, a health check, or a mock.
 
-## Current priority — Headless Backend v0.1
+## Current priority — independent review of Headless Backend v0.2
+
+The owner accepted v0.1 at `0ad17da760d148c9d203a672aa4516417babd511` and approved bounded SQLite custody for the single-node logs path. v0.2 adds tenant-scoped buffering, crash recovery, independent fresh/replay reservations, and tenant delivery counters. The test oracle compares the spooled IDs and multiplicities with real Loki through the raw and Evidence APIs. Full M3, M4, M5, M6 and TEST-038 remain open. [Custody decision](../adr/single-node-log-custody.md) and [setup, acceptance and limitations](headless-v0.2.md).
+
+## Headless Backend v0.1 and earlier review
 
 The architecture owner authorized Rust-first product development after the
 independent review of `f2594f9361dfcd12b82ccf2d889c1efa378d4a18`. The
@@ -21,7 +25,7 @@ and [v0.1 contract and functional checks](headless-v0.1.md).
 The subsequent product review rejected `1176a5e`. The corrected logs slice
 now budgets read pages before dispatch, classifies timestamp rejections per
 record, validates stored fields before issuing evidence, and decodes OTLP
-JSON nulls and special doubles. Independent re-review is pending.
+JSON nulls and special doubles. Independent re-review passed at `0ad17da`, as reported by the owner.
 [Product checks and scope](headless-v0.1.md#acceptance-and-traceability)
 
 The earlier benchmark review identified two reporting corrections.
@@ -193,7 +197,7 @@ features are enabled; their tests are not waived by the milestone sequence.
   Run the actual 24-hour reference only with an approved and documented profile.
 - **Blocking decisions:** buffer failure scope, overflow/retry policies,
   late windows, fairness and resource/SLO charter per adapter.
-- **Status:** not started.
+- **Status:** v0.2 exercises bounded local log replay, tenant and live-data progress, original-time visibility and unknown write accounting. Extended outages, multi-signal recovery, physical storage faults and release SLOs remain open. [Slice evidence](headless-v0.2.md#verification-and-limits).
 
 ## M6 — Evidence and operational context
 

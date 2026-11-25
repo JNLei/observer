@@ -72,6 +72,12 @@ pub struct Record {
 }
 
 impl Record {
+    pub fn matches_writer(&self, grant: &Grant) -> bool {
+        self.producer_id == grant.subject
+            && self.service == grant.service
+            && self.is_canonical(grant)
+    }
+
     pub fn is_canonical(&self, grant: &Grant) -> bool {
         let correlation_id = |id: &str, len| lower_hex(id, len) && id.bytes().any(|b| b != b'0');
         let body_valid = match (self.body_capture.as_str(), self.body.as_deref()) {

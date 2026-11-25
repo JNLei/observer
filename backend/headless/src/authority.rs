@@ -60,6 +60,7 @@ pub enum Action {
     Query,
 }
 
+#[derive(Clone)]
 pub struct Grant {
     tenant: String,
     pub subject: String,
@@ -94,7 +95,7 @@ pub struct Credential {
 
 pub struct Authority(Mutex<Connection>);
 
-fn check_private(path: &Path, directory: bool) -> Result<()> {
+pub(crate) fn check_private(path: &Path, directory: bool) -> Result<()> {
     let m = fs::symlink_metadata(path).map_err(|_| Error::State)?;
     // SAFETY: geteuid takes no arguments and has no failure mode.
     if m.uid() != unsafe { libc::geteuid() }
@@ -286,6 +287,27 @@ impl Authority {
         Ok(())
     }
 
+    /// The authority lock orders revocation against the local custody transaction.
+    /// Replay uses the immutable provisioned credential ID, never a stored bearer.
+    pub fn with_writer<T>(
+        &self,
+        tenant: &str,
+        subject: &str,
+        f: impl FnOnce(&Grant) -> Result<T>,
+    ) -> Result<T> {
+        let db = self.db()?;
+        let grant = db
+            .query_row(
+                "SELECT c.tenant,c.id,c.service,t.text_body FROM credentials c
+             JOIN tenants t ON t.name=c.tenant WHERE c.tenant=?1 AND c.id=?2 AND c.ingest=1",
+                params![tenant, subject],
+                read_grant,
+            )
+            .optional()?
+            .ok_or(Error::Denied)?;
+        f(&grant)
+    }
+
     pub fn authorize(&self, key: &Key, target: Option<&str>, action: Action) -> Result<Grant> {
         let db = self.db()?;
         let (grant, ingest, query) = db
@@ -295,16 +317,7 @@ impl Authority {
                 [key.0.as_slice()],
                 |row| {
                     Ok((
-                        Grant {
-                            tenant: row.get(0)?,
-                            subject: row.get(1)?,
-                            service: row.get(2)?,
-                            capture: if row.get::<_, bool>(3)? {
-                                Capture::TextBody
-                            } else {
-                                Capture::MetadataOnly
-                            },
-                        },
+                        read_grant(row)?,
                         row.get::<_, bool>(4)?,
                         row.get::<_, bool>(5)?,
                     ))
@@ -322,4 +335,17 @@ impl Authority {
         }
         Ok(grant)
     }
+}
+
+fn read_grant(row: &rusqlite::Row<'_>) -> rusqlite::Result<Grant> {
+    Ok(Grant {
+        tenant: row.get(0)?,
+        subject: row.get(1)?,
+        service: row.get(2)?,
+        capture: if row.get::<_, bool>(3)? {
+            Capture::TextBody
+        } else {
+            Capture::MetadataOnly
+        },
+    })
 }

@@ -76,9 +76,9 @@ class Local(unittest.TestCase):
     def cli(self, op):
         subprocess.run([BIN, op, self.state], check=True, stdout=subprocess.DEVNULL)
 
-    def start_backend(self):
+    def start_backend(self, **settings):
         self.backend = subprocess.Popen([BIN, "serve", self.state], stdout=subprocess.PIPE,
-                                        env=dict(os.environ, OBSERVE_LISTEN="127.0.0.1:0"))
+                                        env=dict(os.environ, OBSERVE_LISTEN="127.0.0.1:0", **settings))
         self.addCleanup(stop, self.backend)
         with selectors.DefaultSelector() as sel:
             sel.register(self.backend.stdout, selectors.EVENT_READ)
@@ -430,13 +430,14 @@ class RealLoki(Local):
                 self.fail(f"expected {count} visible rows in {tenant}, last HTTP status {status}")
             time.sleep(.05)
 
-    def start_loki(self):
+    def start_loki(self, state=None):
+        state = state or self.state
         with socket.socket() as port:
             port.bind(("127.0.0.1", 0))
             grpc_port = port.getsockname()[1]
-        diagnostics = (self.state / "loki-test.log").open("wb")
+        diagnostics = (state / "loki-test.log").open("wb")
         self.addCleanup(diagnostics.close)
-        loki = subprocess.Popen(["python3", ROOT / "scripts/run-local-loki.py", self.state],
+        loki = subprocess.Popen(["python3", ROOT / "scripts/run-local-loki.py", state],
                                 env=dict(os.environ, OBSERVE_LOKI_GRPC_PORT=str(grpc_port)),
                                 stdout=diagnostics, stderr=subprocess.STDOUT)
         self.addCleanup(stop, loki)
@@ -446,7 +447,7 @@ class RealLoki(Local):
             try:
                 with socket.socket(socket.AF_UNIX) as s:
                     s.settimeout(1)
-                    s.connect(str(self.state / "loki.sock:0"))
+                    s.connect(str(state / "loki.sock:0"))
                     s.sendall(b"GET /ready HTTP/1.0\r\nHost: localhost\r\n\r\n")
                     if b" 200 " in s.recv(500):
                         break
@@ -455,7 +456,7 @@ class RealLoki(Local):
             time.sleep(.1)
         else:
             self.fail("Loki readiness timeout")
-        tls = ssl.create_default_context(cafile=str(self.state / "loki.crt"))
+        tls = ssl.create_default_context(cafile=str(state / "loki.crt"))
         tls.maximum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection(("127.0.0.1", grpc_port), timeout=2) as conn:
             with self.assertRaises(ssl.SSLError):

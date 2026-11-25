@@ -15,3 +15,5 @@ The owner authorized Rust-first development of the first headless logs slice
 after independent review of the controlled comparison. Full TEST-038 and
 the remaining recovery gates stay open.
 [Rust-first headless product development](rust-first-headless-slice.md)
+
+The owner approved single-node SQLite custody for sanitized OTLP logs, with Loki 204 as the producer success boundary. [Single-node log custody](single-node-log-custody.md)

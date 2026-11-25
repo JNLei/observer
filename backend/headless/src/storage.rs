@@ -23,6 +23,8 @@ use tokio::{
 pub enum StoreError {
     Offline,        // no request submitted
     Response,       // completed reply, unsuccessful or uninterpretable
+    Throttled(u64), // requested minimum retry delay, in seconds
+    WriteDenied,
     ResponseBudget, // a completed reply exceeded the materialization cap
     Indeterminate,  // lost transport after dispatch, work may still be running
     Deadline,       // expired before dispatch
@@ -33,8 +35,14 @@ type StoreResult<T> = std::result::Result<T, StoreError>;
 pub trait LogStore: Send + Sync {
     fn source(&self) -> &'static str;
     fn write_time_range(&self, now_ns: u64) -> RangeInclusive<u64>;
-    async fn write(&self, grant: &Grant, records: &[Record]) -> StoreResult<()>;
+    async fn writer(&self) -> StoreResult<Box<dyn LogWriter>>;
     async fn scan(&self, grant: &Grant, query: &Query, deadline: Instant) -> StoreResult<Page>;
+}
+
+#[async_trait]
+pub trait LogWriter: Send {
+    fn peer_pid(&self) -> i32;
+    async fn write(self: Box<Self>, grant: &Grant, records: &[Record]) -> StoreResult<()>;
 }
 
 pub struct Loki(pub PathBuf);
@@ -78,27 +86,49 @@ where
 }
 
 impl Loki {
+    async fn connect(&self) -> StoreResult<Exchange> {
+        timeout(Duration::from_secs(1), async {
+            let stream = UnixStream::connect(&self.0)
+                .await
+                .map_err(|_| StoreError::Offline)?;
+            let pid = stream
+                .peer_cred()
+                .ok()
+                .and_then(|c| c.pid())
+                .filter(|p| *p > 0)
+                .ok_or(StoreError::Offline)?;
+            let (sender, conn) = http1::handshake(TokioIo::new(stream))
+                .await
+                .map_err(|_| StoreError::Offline)?;
+            let mut transport = JoinSet::new();
+            transport.spawn(conn);
+            Ok(Exchange {
+                sender,
+                pid,
+                _transport: transport,
+            })
+        })
+        .await
+        .map_err(|_| StoreError::Offline)?
+    }
+}
+
+struct Exchange {
+    sender: http1::SendRequest<Full<Bytes>>,
+    pid: i32,
+    _transport: JoinSet<std::result::Result<(), hyper::Error>>,
+}
+
+impl Exchange {
     async fn request(
-        &self,
+        mut self,
         grant: &Grant,
         method: Method,
         path: String,
         body: Vec<u8>,
         deadline: Option<Instant>,
     ) -> StoreResult<(u16, Bytes)> {
-        let connect = async {
-            let stream = UnixStream::connect(&self.0)
-                .await
-                .map_err(|_| StoreError::Offline)?;
-            http1::handshake(TokioIo::new(stream))
-                .await
-                .map_err(|_| StoreError::Offline)
-        };
-        let (mut sender, conn) = timeout(Duration::from_secs(1), connect)
-            .await
-            .map_err(|_| StoreError::Offline)??;
-        let mut transport = JoinSet::new();
-        transport.spawn(conn);
+        let write = method == Method::POST;
         let mut builder = Request::builder()
             .method(method)
             .uri(path)
@@ -121,12 +151,33 @@ impl Loki {
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| StoreError::Offline)?;
         let exchange = async {
-            let response = sender
+            let response = self
+                .sender
                 .send_request(req)
                 .await
                 .map_err(|_| StoreError::Indeterminate)?;
             let status = response.status().as_u16();
+            let retry_after = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| {
+                    v.parse::<u64>().ok().or_else(|| {
+                        httpdate::parse_http_date(v).ok().map(|t| {
+                            t.duration_since(std::time::SystemTime::now())
+                                .unwrap_or_default()
+                                .as_secs()
+                                + 1
+                        })
+                    })
+                });
             let data = finish_body(response.into_body(), status == 200, REPLY_BYTES).await?;
+            if write && matches!(status, 401 | 403) {
+                return Err(StoreError::WriteDenied);
+            }
+            if write && matches!(status, 429 | 503) {
+                return Err(StoreError::Throttled(retry_after.unwrap_or(0)));
+            }
             Ok((status, data))
         };
         timeout(Duration::from_secs(5), exchange)
@@ -144,30 +195,8 @@ impl LogStore for Loki {
         const MINUTE: u64 = 60 * 1_000_000_000;
         now_ns.saturating_sub(48 * 60 * MINUTE)..=now_ns.saturating_add(10 * MINUTE)
     }
-    async fn write(&self, grant: &Grant, records: &[Record]) -> StoreResult<()> {
-        let values: Vec<_> = records
-            .iter()
-            .map(|r| {
-                (
-                    r.timestamp_ns,
-                    serde_json::to_string(r).expect("serializable log"),
-                )
-            })
-            .collect();
-        let body = json!({"streams":[{"stream":{"observe_format":"logs_v1"},"values":values}]});
-        let (status, _) = self
-            .request(
-                grant,
-                Method::POST,
-                "/loki/api/v1/push".into(),
-                body.to_string().into_bytes(),
-                None,
-            )
-            .await?;
-        if status != 204 {
-            return Err(StoreError::Response);
-        }
-        Ok(())
+    async fn writer(&self) -> StoreResult<Box<dyn LogWriter>> {
+        Ok(Box::new(self.connect().await?))
     }
     async fn scan(&self, grant: &Grant, q: &Query, deadline: Instant) -> StoreResult<Page> {
         let limit = page_limit(q.limit, grant.capture);
@@ -192,12 +221,46 @@ impl LogStore for Loki {
             limit + 1
         );
         let (code, bytes) = self
+            .connect()
+            .await?
             .request(grant, Method::GET, path, vec![], Some(deadline))
             .await?;
         if code != 200 {
             return Err(StoreError::Response);
         }
         decode_page(&bytes, grant, q, limit)
+    }
+}
+
+#[async_trait]
+impl LogWriter for Exchange {
+    fn peer_pid(&self) -> i32 {
+        self.pid
+    }
+    async fn write(self: Box<Self>, grant: &Grant, records: &[Record]) -> StoreResult<()> {
+        let values: Vec<_> = records
+            .iter()
+            .map(|r| {
+                (
+                    r.timestamp_ns,
+                    serde_json::to_string(r).expect("serializable log"),
+                )
+            })
+            .collect();
+        let body = json!({"streams":[{"stream":{"observe_format":"logs_v1"},"values":values}]});
+        let (status, _) = self
+            .request(
+                grant,
+                Method::POST,
+                "/loki/api/v1/push".into(),
+                body.to_string().into_bytes(),
+                None,
+            )
+            .await?;
+        if status != 204 {
+            return Err(StoreError::Response);
+        }
+        Ok(())
     }
 }
 
