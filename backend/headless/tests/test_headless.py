@@ -241,6 +241,79 @@ class ControlledStore(Local):
         self.assertEqual(self.call("/v1/logs", self.writer, {})[0], 200)
         self.assertEqual(len(self.captured), 3)
 
+    def test_protojson_nulls_nonfinite_values_and_otlp_field_rules(self):
+        t = time.time_ns()
+        span = "aabbccdd55667788"
+        records = [dict(log(t), timeUnixNano=None, observedTimeUnixNano=str(t), traceId=TRACE.upper(),
+                        spanId=span.upper(), flags=None, body={"doubleValue": value})
+                   for value in ("NaN", "Infinity", "-Infinity")]
+        records.append({"timeUnixNano": f"{t}0e-1", "severityNumber": 9, "attributes": None,
+                        "body": {"arrayValue": {"values": [{"doubleValue": "NaN"},
+                                  {"kvlistValue": {"values": [{"key": "k", "value": {"doubleValue": "-Infinity"}}]}}]}}})
+        records.append({"timeUnixNano": t, "severity_number": 17, "unknownNewField": {"traceId": []}})
+        code, _, headers = self.call("/v1/logs", self.writer, envelope(records))
+        self.assertEqual((code, headers.get("x-observe-accepted-records")), (200, "5"))
+        values = json.loads(self.captured[-1][1])["streams"][0]["values"]
+        decoded = [json.loads(line) for _, line in values]
+        for row in decoded[:3]:
+            self.assertEqual((row["event_ns"], row["observed_ns"], row["timestamp_ns"]), (None, str(t), str(t)))
+            self.assertEqual((row["trace_id"], row["span_id"], row["trace_flags"]), (TRACE, span, 0))
+            self.assertEqual((row["body_capture"], row["body"]), ("withheld_by_policy", None))
+        self.assertEqual(decoded[3]["event_ns"], str(t))
+        self.assertEqual(decoded[4]["severity_number"], 0)
+        for fields in ({"severityNumber": "SEVERITY_NUMBER_INFO"}, {"attributes": [None]},
+                       {"traceId": "not hex"}, {"timeUnixNano": "1.25"}, {"body": {"doubleValue": "unknown"}}):
+            with self.subTest(fields=fields):
+                self.assertEqual(self.call("/v1/logs", self.writer, envelope([dict(log(t), **fields)]))[0], 400)
+        self.assertEqual(len(self.captured), 1)
+
+    def test_invalid_source_fields_fail_closed_across_both_read_routes(self):
+        t = time.time_ns()
+        self.assertEqual(self.call("/v1/logs", self.writer, envelope([log(t)]))[0], 200)
+        timestamp, line = json.loads(self.captured[-1][1])["streams"][0]["values"][0]
+        row = json.loads(line)
+        q = {"start_ns": str(t), "end_ns": str(t + 1)}
+
+        def serve(record):
+            self.page = {"status": "success", "data": {"resultType": "streams",
+                         "result": [{"values": [[timestamp, json.dumps(record)]]}]}}
+
+        for change in ({"event_ns": "bad-time"}, {"observed_ns": "0"}, {"received_ns": "-1"},
+                       {"timestamp_ns": "0" + timestamp}, {"event_ns": str(t + 1)},
+                       {"event_ns": None, "observed_ns": None, "received_ns": str(t + 1)},
+                       {"trace_id": "invalid-id"}, {"trace_id": "0" * 32}, {"span_id": "0" * 16},
+                       {"span_id": "a"}, {"trace_id": None}, {"span_id": "ABCDEF0123456789"},
+                       {"trace_id": TRACE.upper()},
+                       {"severity_number": 25}, {"service": ""}, {"tenant": "bravo"},
+                       {"body_capture": "text", "body": PRIVATE}):
+            serve(dict(row, **change))
+            for evidence in (False, True):
+                with self.subTest(fields=list(change), evidence=evidence):
+                    code, data, _ = self.read("alpha", self.reader, q, evidence)
+                    self.assertEqual((code, data["outcome"], data["effective_range"]), (503, "unavailable", None))
+                    self.assertTrue({"records", "references", "provenance"}.isdisjoint(data))
+                    self.assertNotIn(PRIVATE, json.dumps(data))
+        serve(row)
+        self.assertEqual(self.read("alpha", self.reader, q, True)[1]["records"], [row])
+        self.page["data"]["result"][0]["values"].append([timestamp, json.dumps(dict(row, event_ns="invalid"))])
+        code, data, _ = self.read("alpha", self.reader, dict(q, limit=1), True)
+        self.assertEqual((code, data["outcome"]), (503, "unavailable"))
+        self.assertTrue({"records", "references", "provenance"}.isdisjoint(data))
+
+    def test_timestamp_dispositions_at_dispatch_and_ambiguous_ack(self):
+        t = time.time_ns()
+        expired = t - 72 * 3600 * 10**9
+        outside = [{"observedTimeUnixNano": str(expired)}, log(t + 12 * 60 * 10**9)]
+        code, _, h = self.call("/v1/logs", self.writer, envelope(outside))
+        self.assertEqual((code, h.get("x-observe-rejected-records")), (400, "2"))
+        self.assertFalse(self.captured)
+        self.drop_reply = True
+        code, _, h = self.call("/v1/logs", self.writer, envelope([log(t)] + outside))
+        self.assertEqual((code, h.get("x-observe-rejected-records"), h.get("x-observe-unknown-records"),
+                          h.get("x-observe-accepted-records")), (503, "2", "1", "0"))
+        values = json.loads(self.captured[0][1])["streams"][0]["values"]
+        self.assertEqual([timestamp for timestamp, _ in values], [str(t)])
+
     def test_wire_limits_filters_and_denials(self):
         t = time.time_ns()
         for token, expected in [(None, 401), ("wrong", 401), (self.reader, 403)]:
@@ -357,13 +430,7 @@ class RealLoki(Local):
                 self.fail(f"expected {count} visible rows in {tenant}, last HTTP status {status}")
             time.sleep(.05)
 
-    def test_two_tenants_otlp_raw_evidence_and_offline_store(self):
-        self.boot()
-        self.tenant("alpha", "text_body")
-        self.tenant("bravo")
-        writer = self.credential("alpha", "ingest")
-        reader = self.credential("alpha", "query")
-        other = self.credential("bravo", "ingest", "query")
+    def start_loki(self):
         with socket.socket() as port:
             port.bind(("127.0.0.1", 0))
             grpc_port = port.getsockname()[1]
@@ -393,6 +460,69 @@ class RealLoki(Local):
         with socket.create_connection(("127.0.0.1", grpc_port), timeout=2) as conn:
             with self.assertRaises(ssl.SSLError):
                 tls.wrap_socket(conn, server_hostname="localhost")
+        return loki
+
+    def test_byte_budget_partial_page_and_subsequent_read(self):
+        self.boot()
+        self.tenant("alpha", "text_body")
+        token = self.credential("alpha", "ingest", "query")["token"]
+        self.start_loki()
+        t = time.time_ns() - 10**9
+        # Ordinary maximum-length text records. The wire budget reserves space
+        # for every permitted encoding independently of this fixture's contents.
+        body = "application log ".ljust(4096, ".")
+        for start in range(0, 100, 10):
+            records = [log(t + n, body) for n in range(start, start + 10)]
+            code, _, h = self.call("/v1/logs", token, envelope(records))
+            self.assertEqual((code, h.get("x-observe-accepted-records")), (200, "10"))
+        self.visible("alpha", token, {"start_ns": str(t + 99), "end_ns": str(t + 100)}, 1)
+        q = {"start_ns": str(t), "end_ns": str(t + 100), "limit": 100}
+        for evidence in (False, True):
+            code, page, _ = self.read("alpha", token, q, evidence)
+            self.assertEqual((code, page["outcome"], page["coverage"]), (200, "partial", "unknown"))
+            self.assertIn("response_byte_limit", page["limitations"])
+            count = len(page["records"])
+            self.assertTrue(0 < count < 100)
+            self.assertEqual([r["event_ns"] for r in page["records"]], [str(t + n) for n in range(count)])
+            self.assertEqual(page["effective_range"]["end_ns"], str(t + count))
+            if evidence:
+                self.assertEqual(len(page["references"]), count)
+        code, one, _ = self.read("alpha", token, dict(q, start_ns=str(t + 99), limit=1))
+        self.assertEqual((code, one["outcome"], one["records"][0]["body"]), (200, "matches", body))
+        # Filling the budget exactly, with no lookahead row, is a successful full page.
+        exact = self.read("alpha", token, dict(q, end_ns=str(t + count)))[1]
+        self.assertEqual((exact["outcome"], len(exact["records"])), ("matches", count))
+
+    def test_timestamp_rejection_and_visible_eligible_subset(self):
+        self.boot()
+        self.tenant("alpha", "text_body")
+        token = self.credential("alpha", "ingest", "query")["token"]
+        self.start_loki()
+        t = time.time_ns()
+        minute = 60 * 10**9
+        expired = t - 72 * 60 * minute
+        code, _, h = self.call("/v1/logs", token, protobuf_log(expired),
+                                headers={"Content-Type": "application/x-protobuf"})
+        self.assertEqual((code, h.get("x-observe-rejected-records"), h.get("x-observe-unknown-records")), (400, "1", "0"))
+        code, data, h = self.call("/v1/logs", token, envelope([log(expired), log(t, "eligible")]))
+        self.assertEqual((code, data.get("partialSuccess", {}).get("rejectedLogRecords")), (200, "1"))
+        self.assertEqual((h.get("x-observe-accepted-records"), h.get("x-observe-unknown-records")), ("1", "0"))
+        page = self.visible("alpha", token, {"start_ns": str(t), "end_ns": str(t + 1)}, 1)
+        self.assertEqual([r["body"] for r in page["records"]], ["eligible"])
+        # A recently written future-eligible row may precede in-window history on the same stream.
+        late = t - (48 * 60 - 1) * minute
+        for stamp in (t + 9 * minute, late):
+            self.assertEqual(self.call("/v1/logs", token, envelope([log(stamp)]))[0], 200)
+        self.visible("alpha", token, {"start_ns": str(late), "end_ns": str(late + 1)}, 1)
+
+    def test_two_tenants_otlp_raw_evidence_and_offline_store(self):
+        self.boot()
+        self.tenant("alpha", "text_body")
+        self.tenant("bravo")
+        writer = self.credential("alpha", "ingest")
+        reader = self.credential("alpha", "query")
+        other = self.credential("bravo", "ingest", "query")
+        loki = self.start_loki()
 
         t = time.time_ns() - 1_000_000_000
         q = {"start_ns": str(t), "end_ns": str(t + 100), "trace_id": TRACE, "service": "gateway"}

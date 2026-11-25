@@ -1,7 +1,7 @@
 //! Provisional raw query and Evidence API representations.
 use crate::{
     authority::name_ok,
-    logs::{now_ns, Record},
+    logs::{lower_hex, now_ns, Record},
     Error, Result,
 };
 use serde::{Deserialize, Serialize};
@@ -25,13 +25,6 @@ fn default_limit() -> usize {
 }
 fn default_deadline() -> u64 {
     2000
-}
-
-pub fn lower_hex(id: &str, len: usize) -> bool {
-    id.len() == len
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 impl Query {
@@ -70,19 +63,28 @@ impl Query {
 
 pub struct Page {
     pub records: Vec<Record>,
-    pub truncated: bool,
+    pub truncation: Option<Truncation>,
     pub warning: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum Truncation {
+    RowLimit,
+    ResponseByteLimit,
 }
 
 pub fn result(tenant: &str, source: &str, query: &Query, page: Page, evidence: bool) -> Value {
     let mut reasons = vec!["collection_retention_and_late_arrival_unknown"];
-    if page.truncated {
-        reasons.push("row_limit");
+    if let Some(limit) = page.truncation {
+        reasons.push(match limit {
+            Truncation::RowLimit => "row_limit",
+            Truncation::ResponseByteLimit => "response_byte_limit",
+        });
     }
     if page.warning {
         reasons.push("source_warning");
     }
-    let outcome = if page.truncated || page.warning {
+    let outcome = if page.truncation.is_some() || page.warning {
         "partial"
     } else if page.records.is_empty() {
         "no_matches"
@@ -95,8 +97,8 @@ pub fn result(tenant: &str, source: &str, query: &Query, page: Page, evidence: b
         .zip(page.records.last())
         .map(|(first, last)| {
             json!({
-                "start_ns": first.timestamp_ns.to_string(),
-                "end_ns": (last.timestamp_ns + 1).to_string()
+                "start_ns": first.timestamp_ns,
+                "end_ns": (last.timestamp_ns.0 + 1).to_string()
             })
         });
     let mut data = json!({
@@ -120,8 +122,8 @@ pub fn result(tenant: &str, source: &str, query: &Query, page: Page, evidence: b
                     "path": path,
                     "query": {
                         "record_id": r.id,
-                        "start_ns": r.timestamp_ns.to_string(),
-                        "end_ns": (r.timestamp_ns + 1).to_string(),
+                        "start_ns": r.timestamp_ns,
+                        "end_ns": (r.timestamp_ns.0 + 1).to_string(),
                         "limit": 1
                     },
                     "record_id": r.id,

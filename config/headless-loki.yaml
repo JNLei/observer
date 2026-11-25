@@ -41,6 +41,9 @@ query_scheduler:
   grpc_client_config: *local_tls
 compactor_grpc_client: *local_tls
 ingester:
+  # Loki's per-stream unordered window is half max_chunk_age. Cover the
+  # entire 48h history + 10m future admission window in any arrival order.
+  max_chunk_age: 100h
   lifecycler:
     min_ready_duration: 0s
   wal:
@@ -59,10 +62,14 @@ limits_config:
   retention_period: ${OBSERVE_LOKI_RETENTION}
   query_timeout: 2s
   reject_old_samples: true
-  reject_old_samples_max_age: 48h
+  # The adapter enforces 48h past / 10m future before dispatch. A minute
+  # of store-side slack keeps an admitted boundary row eligible in transit.
+  reject_old_samples_max_age: 48h1m
+  creation_grace_period: 11m
   max_entries_limit_per_query: 101
   unordered_writes: true
 querier:
+  query_ingesters_within: 0s
   per_request_limits_enabled: true
   max_concurrent: 4
 query_range:

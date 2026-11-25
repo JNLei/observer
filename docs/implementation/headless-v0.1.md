@@ -154,13 +154,31 @@ contain secrets, so this mode requires deliberate tenant opt-in. The local
 policy is fixed at tenant creation. Each admitted instance gets a new record
 ID. Retries can create separate records.
 
+The JSON decoder uses the pinned OTLP message descriptors. A null field is
+unset, so a null event timestamp falls back to the observed timestamp.
+It accepts numeric or quoted integer timestamps, hex trace/span IDs in either
+case and the ProtoJSON double values `"NaN"`, `"Infinity"` and `"-Infinity"`.
+Capture policy also applies to these decoded values. OTLP enums use integer
+values and unknown fields are ignored. [OTLP JSON encoding](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding)
+and [ProtoJSON field representations](https://protobuf.dev/programming-guides/json/#representation-of-each-type).
+
+Immediately before dispatch, the adapter's admission window is applied to
+each effective timestamp, using the backend's clock. The local Loki candidate
+accepts timestamps from 48 hours in the past through 10 minutes in the
+future, inclusive. Only eligible rows are sent. The private Loki configuration
+allows an extra minute at each boundary for transit. Its 100-hour maximum
+chunk age gives a stream a 50-hour out-of-order window, and queries include
+ingesters throughout the admitted range. This permits a late row to follow a
+future-dated row on the same stream. [Pinned Loki timestamp checks](https://github.com/grafana/loki/blob/v3.7.10/pkg/distributor/validator.go)
+and [pinned Loki stream window](https://github.com/grafana/loki/blob/v3.7.10/pkg/ingester/stream.go).
+
 | OTLP response | What the caller knows |
 | --- | --- |
 | 200, empty success | The candidate acknowledged every eligible row with HTTP 204. An empty export is also successful. |
-| 200, partial success | The eligible rows received that acknowledgement. The protocol's rejected count covers records that failed local validation. |
-| 400 or 413 before dispatch | Malformed input, all-invalid records or a request limit prevented submission. A request-level limit rejects the entire export. |
+| 200, partial success | Loki acknowledged every forwarded row. The rejected count includes all records that failed validation or fell outside the write window. The exporter must not retry a partial success. |
+| 400 or 413 before dispatch | Malformed input, zero eligible records in a nonempty export, or a request limit prevented submission. A request-level limit rejects the entire export. |
 | 401, 403, 415, 408 or 429 before dispatch | Authentication, permission, media, body timeout or available capacity prevented submission. |
-| 503 after a store attempt | The response distinguishes a connection failure before submission from an ambiguous submitted batch. Loki can commit a subset before returning 400. A lost response is also ambiguous. |
+| 503 after a store attempt | A connection failure before submission leaves eligible rows unsubmitted. A store rejection or lost reply after dispatch leaves only the forwarded rows unknown. Loki can commit a subset before returning 400. |
 
 For a classified batch the response includes `X-Observe-Accepted-Records`,
 `X-Observe-Rejected-Records`, `X-Observe-Unknown-Records` and
@@ -186,10 +204,20 @@ of at most one hour. Filters are exact matches on `service`, `trace_id` and
 `record_id`. IDs use 32 lowercase hex digits. Unknown parameters fail validation.
 The row limit is 1–100 (default 50), and the deadline is 1–2,000 ms (default
 2,000). The client supplies structured parameters. Only the adapter creates
-the store query. It scopes the actual read to the authority-issued tenant,
-bounds the response to 2 MiB and requests one extra row to detect truncation.
+the store query and scopes the actual read to the authority-issued tenant.
 The query deadline starts at HTTP handler entry. The adapter forwards the
 remaining budget using Loki's per-request limit. [Loki query API](https://grafana.com/docs/loki/latest/reference/loki-http-api/#query-logs-within-a-range-of-time)
+
+The adapter budgets each Loki response to 2 MiB, including 64 KiB for the
+envelope, up to 4 KiB per row for metadata and one extra row to detect
+truncation. A captured text byte can occupy seven bytes across the stored
+JSON and Loki's enclosing JSON. This gives a `text_body` page up to 61 rows
+and a `metadata_only` page up to 100. A further matching row produces
+`partial` with `response_byte_limit` when the byte budget set the page size,
+or `row_limit` when the requested limit did. An exact fit has no truncation
+flag. If a source response itself exceeds 2 MiB, the adapter discards the
+remaining bytes as they arrive. A completed oversized reply releases the
+read slot and returns HTTP 503 with reason `source_response_byte_limit`.
 
 The timestamp used for ordering is the original event time, then the observed
 time if event time is absent, then local receive time if both are absent.
@@ -213,6 +241,13 @@ source and transform identity, and per-record references. Re-run a reference
 using its method, tenant-scoped path and query. Each resolution checks the
 current credential. Retention or late data can change a repeated query. The
 service stores no separate evidence copy or result cache.
+
+Both routes validate every returned source row, including the lookahead row.
+The outer timestamp must match the stored timestamp and the event, observed
+or received fallback. The adapter checks canonical decimal timestamps, tenant
+and producer fields, severity, trace/span IDs, query filters and the tenant's
+capture policy. Any invalid row makes the entire page `unavailable` with
+unknown coverage and no records, references or provenance.
 
 ## Security and recovery boundaries
 
@@ -256,9 +291,10 @@ python3 backend/headless/tests/test_headless.py -v
 | Exercised slice | Applicable architecture identifiers | Functional evidence |
 | --- | --- | --- |
 | Local authority and external clients | REQ-001, 003, 008–010, 013–014, 016, 037. ADR-002–005, ADR-A6, ADR-LANG-01. Parts of TEST-001–006, 041, 053. | Empty and concurrent initialization, single redemption, restart, owner recovery, scopes, revocation, known/absent foreign tenants. |
-| OTLP and data boundary | REQ-005, 019, 025–027, 029. ADR-A1/A7/A8, ADR-I1/I2/I4/I5. Parts of TEST-007, 024–026, 029–030, 036, 043, 051. | Gzipped protobuf and JSON through real Loki, timestamp fallbacks, copied IDs, pre-store capture, partial rejection, refused/ambiguous writes, byte/decode/connection admission fixtures. |
-| Raw retrieval and evidence | REQ-007, 015–016, 018, 032. ADR-010–012, ADR-EVID-01. Parts of TEST-003, 006–008, 014, 034, 042, 044, 050. | External reference resolution, original timestamps, bounded filters, truncation, warnings, source outage, malformed replies, deadline and residual work, revocation during a read. |
+| OTLP and data boundary | REQ-005, 019, 025–027, 029. ADR-A1/A7/A8, ADR-I1/I2/I4/I5. Parts of TEST-007, 024–026, 029–030, 036, 043, 051. | Gzipped protobuf and JSON, null timestamp fallback, nonfinite doubles and pre-store capture. Real Loki confirms mixed-batch partial success, single-row visibility and in-window late writes. Controlled replies exercise refused and ambiguous writes. |
+| Raw retrieval and evidence | REQ-007, 015–016, 018, 032. ADR-010–012, ADR-EVID-01. S03, S10. Parts of TEST-003, 006–008, 014, 034, 042, 044, 050. | External reference resolution, filter and field validation, source warnings and outages, deadlines, residual work and revocation. Real Loki exercises a byte-limited page and the same tenant's next read. Body-stream tests distinguish completion from transport loss. |
 
 M3, M4 and M6 each have additional acceptance criteria. Full TEST-038,
 REC-REF-24, broader recovery/fairness, policy and multi-signal gates remain
-open. The first product slice is ready for independent review.
+open. The four findings from the independent rejection of `1176a5e` have
+regression coverage. The corrected logs slice is ready for independent re-review.

@@ -1,5 +1,5 @@
 //! OTLP admission, capture policy and the storage-independent record.
-use crate::authority::{random_hex, Capture, Grant};
+use crate::authority::{name_ok, random_hex, Capture, Grant};
 use crate::{Error, Result};
 use flate2::read::MultiGzDecoder;
 use opentelemetry_proto::tonic::{
@@ -17,8 +17,9 @@ use std::{
 };
 
 pub const BYTE_LIMIT: usize = 65_536;
-const RECORD_LIMIT: usize = 256;
-const STRUCTURE_LIMIT: usize = 4096;
+pub const TEXT_BODY_LIMIT: usize = 4096;
+pub(super) const RECORD_LIMIT: usize = 256;
+pub(super) const STRUCTURE_LIMIT: usize = 4096;
 
 pub fn now_ns() -> u64 {
     SystemTime::now()
@@ -27,16 +28,27 @@ pub fn now_ns() -> u64 {
         .as_nanos() as u64
 }
 
-// Public nanoseconds use decimal strings so JavaScript clients retain precision.
-mod decimal_ns {
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+// Stored records use positive canonical decimal strings. Reserve one nanosecond
+// at the top of the range for the exclusive end of a record reference.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct LogTime(pub u64);
 
-    pub fn serialize<S: Serializer>(ns: &u64, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_str(ns)
+impl TryFrom<String> for LogTime {
+    type Error = &'static str;
+
+    fn try_from(s: String) -> std::result::Result<Self, Self::Error> {
+        let n = s.parse::<u64>().map_err(|_| "invalid log time")?;
+        if n == 0 || n >= i64::MAX as u64 || n.to_string() != s {
+            return Err("invalid log time");
+        }
+        Ok(Self(n))
     }
+}
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-        String::deserialize(d)?.parse().map_err(D::Error::custom)
+impl From<LogTime> for String {
+    fn from(time: LogTime) -> Self {
+        time.0.to_string()
     }
 }
 
@@ -47,17 +59,55 @@ pub struct Record {
     pub tenant: String,
     pub producer_id: String,
     pub service: String,
-    #[serde(with = "decimal_ns")]
-    pub timestamp_ns: u64,
-    pub event_ns: Option<String>,
-    pub observed_ns: Option<String>,
-    pub received_ns: String,
+    pub timestamp_ns: LogTime,
+    pub event_ns: Option<LogTime>,
+    pub observed_ns: Option<LogTime>,
+    pub received_ns: LogTime,
     pub severity_number: i32,
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub trace_flags: u8,
     pub body_capture: String,
     pub body: Option<String>,
+}
+
+impl Record {
+    pub fn is_canonical(&self, grant: &Grant) -> bool {
+        let correlation_id = |id: &str, len| lower_hex(id, len) && id.bytes().any(|b| b != b'0');
+        let body_valid = match (self.body_capture.as_str(), self.body.as_deref()) {
+            ("text", Some(s)) => grant.capture == Capture::TextBody && s.len() <= TEXT_BODY_LIMIT,
+            ("absent", None) => true,
+            ("withheld_by_policy", None) => grant.capture == Capture::MetadataOnly,
+            ("withheld_size" | "withheld_type", None) => grant.capture == Capture::TextBody,
+            _ => false,
+        };
+        self.tenant == grant.tenant()
+            && lower_hex(&self.id, 32)
+            && lower_hex(&self.producer_id, 32)
+            && name_ok(&self.service)
+            && self.timestamp_ns
+                == self
+                    .event_ns
+                    .or(self.observed_ns)
+                    .unwrap_or(self.received_ns)
+            && (0..=24).contains(&self.severity_number)
+            && self
+                .trace_id
+                .as_deref()
+                .is_none_or(|id| correlation_id(id, 32))
+            && self
+                .span_id
+                .as_deref()
+                .is_none_or(|id| self.trace_id.is_some() && correlation_id(id, 16))
+            && body_valid
+    }
+}
+
+pub fn lower_hex(id: &str, len: usize) -> bool {
+    id.len() == len
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub struct Batch {
@@ -82,7 +132,9 @@ fn normalize(r: LogRecord, grant: &Grant, received: u64) -> Result<Option<Record
     let (body_capture, body) = match (grant.capture, r.body.and_then(|b| b.value)) {
         (_, None) => ("absent", None),
         (Capture::MetadataOnly, Some(_)) => ("withheld_by_policy", None),
-        (Capture::TextBody, Some(Value::StringValue(s))) if s.len() <= 4096 => ("text", Some(s)),
+        (Capture::TextBody, Some(Value::StringValue(s))) if s.len() <= TEXT_BODY_LIMIT => {
+            ("text", Some(s))
+        }
         (Capture::TextBody, Some(Value::StringValue(_))) => ("withheld_size", None),
         (Capture::TextBody, Some(_)) => ("withheld_type", None),
     };
@@ -95,11 +147,10 @@ fn normalize(r: LogRecord, grant: &Grant, received: u64) -> Result<Option<Record
         tenant: grant.tenant().to_owned(),
         producer_id: grant.subject.clone(),
         service: grant.service.clone(),
-        timestamp_ns: timestamp,
-        event_ns: (r.time_unix_nano != 0).then(|| r.time_unix_nano.to_string()),
-        observed_ns: (r.observed_time_unix_nano != 0)
-            .then(|| r.observed_time_unix_nano.to_string()),
-        received_ns: received.to_string(),
+        timestamp_ns: LogTime(timestamp),
+        event_ns: (r.time_unix_nano != 0).then_some(LogTime(r.time_unix_nano)),
+        observed_ns: (r.observed_time_unix_nano != 0).then_some(LogTime(r.observed_time_unix_nano)),
+        received_ns: LogTime(received),
         severity_number: r.severity_number,
         trace_flags: r.flags as u8,
         trace_id: (!r.trace_id.is_empty()).then(|| hex::encode(r.trace_id)),
@@ -180,36 +231,6 @@ fn protobuf_budget(
     }
     Ok(())
 }
-fn json_budget(data: &[u8]) -> Result<()> {
-    let (mut quoted, mut escaped, mut structural, mut depth) = (false, false, 0, 0i32);
-    for &b in data {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                quoted = false;
-            }
-        } else {
-            match b {
-                b'"' => quoted = true,
-                b'{' | b'[' => {
-                    depth += 1;
-                    structural += 1;
-                }
-                b'}' | b']' => depth -= 1,
-                b',' => structural += 1,
-                _ => (),
-            }
-            if depth > 32 || structural > STRUCTURE_LIMIT {
-                return Err(Error::TooLarge);
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn prepare(wire: &[u8], gzip: bool, json: bool, grant: &Grant) -> Result<Batch> {
     let mut inflated = Vec::new();
     let raw = if gzip {
@@ -225,8 +246,7 @@ pub fn prepare(wire: &[u8], gzip: bool, json: bool, grant: &Grant) -> Result<Bat
         return Err(Error::TooLarge);
     }
     let req: ExportLogsServiceRequest = if json {
-        json_budget(raw)?;
-        serde_json::from_slice(raw).map_err(|_| Error::Invalid)?
+        crate::otlp_json::decode(raw)?
     } else {
         protobuf_budget(raw, Node::Export, 0, &mut 0, &mut 0)?;
         ExportLogsServiceRequest::decode(raw).map_err(|_| Error::Invalid)?

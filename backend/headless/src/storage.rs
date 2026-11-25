@@ -1,18 +1,18 @@
 //! Candidate Loki adapter. Only authority-issued grants can address a store.
 use crate::{
-    authority::Grant,
-    logs::Record,
-    query::{lower_hex, Page, Query},
+    authority::{Capture, Grant},
+    logs::{LogTime, Record, TEXT_BODY_LIMIT},
+    query::{Page, Query, Truncation},
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
-use hyper::{client::conn::http1, header, Method, Request};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
+use hyper::{body::Body, client::conn::http1, header, Method, Request};
 use hyper_util::rt::TokioIo;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::json;
-use std::{path::PathBuf, time::Duration};
+use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 use tokio::{
     net::UnixStream,
     task::JoinSet,
@@ -21,21 +21,61 @@ use tokio::{
 
 #[derive(Debug, PartialEq)]
 pub enum StoreError {
-    Offline,       // no request submitted
-    Response,      // completed reply, unsuccessful or uninterpretable
-    Indeterminate, // lost transport after dispatch, work may still be running
-    Deadline,      // expired before dispatch
+    Offline,        // no request submitted
+    Response,       // completed reply, unsuccessful or uninterpretable
+    ResponseBudget, // a completed reply exceeded the materialization cap
+    Indeterminate,  // lost transport after dispatch, work may still be running
+    Deadline,       // expired before dispatch
 }
 type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[async_trait]
 pub trait LogStore: Send + Sync {
     fn source(&self) -> &'static str;
+    fn write_time_range(&self, now_ns: u64) -> RangeInclusive<u64>;
     async fn write(&self, grant: &Grant, records: &[Record]) -> StoreResult<()>;
     async fn scan(&self, grant: &Grant, query: &Query, deadline: Instant) -> StoreResult<Page>;
 }
 
 pub struct Loki(pub PathBuf);
+
+const REPLY_BYTES: usize = 2 * 1024 * 1024;
+const ENVELOPE_BYTES: usize = 64 * 1024; // Loki stats, warnings and envelope
+const ROW_METADATA_BYTES: usize = 4096; // canonical fields, framing and extracted stream labels
+
+fn page_limit(requested: usize, capture: Capture) -> usize {
+    // A control byte can take six bytes in the stored JSON line and seven
+    // when that line is embedded in Loki's JSON. Hold back one lookahead row.
+    let text = if capture == Capture::TextBody {
+        7 * TEXT_BODY_LIMIT
+    } else {
+        0
+    };
+    let wire_rows = (REPLY_BYTES - ENVELOPE_BYTES) / (ROW_METADATA_BYTES + text);
+    requested.min(wire_rows - 1)
+}
+
+async fn finish_body<B>(mut body: B, capture: bool, cap: usize) -> StoreResult<Bytes>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let result = if capture {
+        match Limited::new(&mut body, cap).collect().await {
+            Ok(data) => return Ok(data.to_bytes()),
+            Err(e) if e.is::<LengthLimitError>() => Err(StoreError::ResponseBudget),
+            Err(_) => return Err(StoreError::Indeterminate),
+        }
+    } else {
+        Ok(Bytes::new())
+    };
+    // Reaching the byte cap is a local decision. Drain without buffering
+    // until HTTP completion; the exchange timeout still bounds this work.
+    while let Some(frame) = body.frame().await {
+        frame.map_err(|_| StoreError::Indeterminate)?;
+    }
+    result
+}
 
 impl Loki {
     async fn request(
@@ -86,15 +126,7 @@ impl Loki {
                 .await
                 .map_err(|_| StoreError::Indeterminate)?;
             let status = response.status().as_u16();
-            let data = if status == 200 {
-                Limited::new(response.into_body(), 2 * 1024 * 1024)
-                    .collect()
-                    .await
-                    .map_err(|_| StoreError::Indeterminate)?
-                    .to_bytes()
-            } else {
-                Bytes::new()
-            };
+            let data = finish_body(response.into_body(), status == 200, REPLY_BYTES).await?;
             Ok((status, data))
         };
         timeout(Duration::from_secs(5), exchange)
@@ -108,12 +140,16 @@ impl LogStore for Loki {
     fn source(&self) -> &'static str {
         "local-loki-v1"
     }
+    fn write_time_range(&self, now_ns: u64) -> RangeInclusive<u64> {
+        const MINUTE: u64 = 60 * 1_000_000_000;
+        now_ns.saturating_sub(48 * 60 * MINUTE)..=now_ns.saturating_add(10 * MINUTE)
+    }
     async fn write(&self, grant: &Grant, records: &[Record]) -> StoreResult<()> {
         let values: Vec<_> = records
             .iter()
             .map(|r| {
                 (
-                    r.timestamp_ns.to_string(),
+                    r.timestamp_ns,
                     serde_json::to_string(r).expect("serializable log"),
                 )
             })
@@ -134,6 +170,7 @@ impl LogStore for Loki {
         Ok(())
     }
     async fn scan(&self, grant: &Grant, q: &Query, deadline: Instant) -> StoreResult<Page> {
+        let limit = page_limit(q.limit, grant.capture);
         let mut expr = r#"{observe_format="logs_v1"}"#.to_owned();
         for (field, filter) in [
             ("service", &q.service),
@@ -152,7 +189,7 @@ impl LogStore for Loki {
             utf8_percent_encode(&expr, NON_ALPHANUMERIC),
             q.start_ns,
             q.end_ns,
-            q.limit + 1
+            limit + 1
         );
         let (code, bytes) = self
             .request(grant, Method::GET, path, vec![], Some(deadline))
@@ -160,7 +197,7 @@ impl LogStore for Loki {
         if code != 200 {
             return Err(StoreError::Response);
         }
-        decode_page(&bytes, grant.tenant(), q)
+        decode_page(&bytes, grant, q, limit)
     }
 }
 
@@ -179,31 +216,31 @@ struct LokiData {
 }
 #[derive(Deserialize)]
 struct Stream {
-    values: Vec<(String, String)>,
+    values: Vec<(LogTime, String)>,
 }
 
-fn decode_page(bytes: &[u8], tenant: &str, query: &Query) -> StoreResult<Page> {
+fn decode_page(bytes: &[u8], grant: &Grant, query: &Query, limit: usize) -> StoreResult<Page> {
     let reply: LokiReply = serde_json::from_slice(bytes).map_err(|_| StoreError::Response)?;
     if reply.status != "success" || reply.data.result_type != "streams" {
         return Err(StoreError::Response);
     }
     let (start, end) = query.bounds().map_err(|_| StoreError::Response)?;
     let mut rows = vec![];
-    for (timestamp, line) in reply
+    for (index, (timestamp, line)) in reply
         .data
         .result
         .into_iter()
         .flat_map(|stream| stream.values)
+        .enumerate()
     {
+        if index > limit {
+            return Err(StoreError::Response);
+        }
         let row: Record = serde_json::from_str(&line).map_err(|_| StoreError::Response)?;
-        let t = timestamp.parse::<u64>().map_err(|_| StoreError::Response)?;
-        if row.tenant != tenant
-            || t != row.timestamp_ns
-            || timestamp != t.to_string()
-            || t < start
-            || t > end
-            || !lower_hex(&row.id, 32)
-            || !lower_hex(&row.producer_id, 32)
+        if !row.is_canonical(grant)
+            || timestamp != row.timestamp_ns
+            || timestamp.0 < start
+            || timestamp.0 > end
             || query.service.as_ref().is_some_and(|s| s != &row.service)
             || query
                 .trace_id
@@ -213,11 +250,8 @@ fn decode_page(bytes: &[u8], tenant: &str, query: &Query) -> StoreResult<Page> {
         {
             return Err(StoreError::Response);
         }
-        if t < end {
+        if timestamp.0 < end {
             rows.push(row);
-        }
-        if rows.len() > query.limit + 1 {
-            return Err(StoreError::Response);
         }
     }
     rows.sort_by(|a, b| {
@@ -225,11 +259,82 @@ fn decode_page(bytes: &[u8], tenant: &str, query: &Query) -> StoreResult<Page> {
             .cmp(&b.timestamp_ns)
             .then_with(|| a.id.cmp(&b.id))
     });
-    let truncated = rows.len() > query.limit;
-    rows.truncate(query.limit);
+    let truncation = (rows.len() > limit).then_some(if limit < query.limit {
+        Truncation::ResponseByteLimit
+    } else {
+        Truncation::RowLimit
+    });
+    rows.truncate(limit);
     Ok(Page {
         records: rows,
-        truncated,
+        truncation,
         warning: !reply.warnings.is_empty(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::channel::Channel;
+
+    #[tokio::test]
+    async fn byte_limit_waits_for_the_terminal_frame() {
+        for disconnect in [false, true] {
+            let (mut tx, body) = Channel::<Bytes, std::io::Error>::new(1);
+            let task = tokio::spawn(finish_body(body, true, 4));
+            tx.send_data(Bytes::from_static(b"first")).await.unwrap();
+            tx.send_data(Bytes::from_static(b"last")).await.unwrap();
+            assert!(!task.is_finished());
+            let expected = if disconnect {
+                tx.abort(std::io::Error::other("transport ended early"));
+                StoreError::Indeterminate
+            } else {
+                drop(tx);
+                StoreError::ResponseBudget
+            };
+            assert_eq!(task.await.unwrap(), Err(expected));
+        }
+    }
+
+    #[test]
+    fn write_window_includes_both_endpoints() {
+        let now = 1_800_000_000_000_000_000;
+        let window = Loki(PathBuf::new()).write_time_range(now);
+        let first = now - 48 * 3600 * 1_000_000_000;
+        let last = now + 600 * 1_000_000_000;
+        assert!(window.contains(&first) && window.contains(&last));
+        assert!(!window.contains(&(first - 1)) && !window.contains(&(last + 1)));
+    }
+
+    #[test]
+    fn page_budget_covers_escaped_text_and_lookahead() {
+        // Measure one source row offline, including both JSON encodings.
+        let mut record: Record = serde_json::from_value(json!({
+            "id": "a".repeat(32), "producer_id": "a".repeat(32), "service": "a".repeat(48),
+            "tenant": "a".repeat(48), "timestamp_ns": "9223372036854775806",
+            "event_ns": "9223372036854775806", "observed_ns": "9223372036854775806",
+            "received_ns": "9223372036854775806", "severity_number": 24, "trace_flags": 255,
+            "trace_id": "a".repeat(32), "span_id": "a".repeat(16), "body_capture": "text", "body": ""
+        })).unwrap();
+        let row_bytes = |r: &Record| {
+            let line = serde_json::to_string(r).unwrap();
+            serde_json::to_vec(&(r.timestamp_ns, line)).unwrap().len()
+        };
+        let metadata = row_bytes(&record);
+        assert!(metadata < ROW_METADATA_BYTES);
+        let max_increment = (0..=127u8)
+            .map(|byte| {
+                record.body = Some(char::from(byte).to_string());
+                row_bytes(&record) - metadata
+            })
+            .max()
+            .unwrap();
+        assert_eq!(max_increment, 7);
+        let limit = page_limit(100, Capture::TextBody);
+        assert!(
+            (limit + 1) * (TEXT_BODY_LIMIT * max_increment + ROW_METADATA_BYTES) + ENVELOPE_BYTES
+                <= REPLY_BYTES
+        );
+        assert_eq!(page_limit(100, Capture::MetadataOnly), 100);
+    }
 }

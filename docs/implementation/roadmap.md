@@ -18,7 +18,13 @@ recovery qualification and REC-REF-24 remain open. Standalone timed
 comparisons are paused. [Owner decision](../adr/rust-first-headless-slice.md)
 and [v0.1 contract and functional checks](headless-v0.1.md).
 
-The independent review identified two reporting corrections.
+The subsequent product review rejected `1176a5e`. The corrected logs slice
+now budgets read pages before dispatch, classifies timestamp rejections per
+record, validates stored fields before issuing evidence, and decodes OTLP
+JSON nulls and special doubles. Independent re-review is pending.
+[Product checks and scope](headless-v0.1.md#acceptance-and-traceability)
+
+The earlier benchmark review identified two reporting corrections.
 
 1. Natural overlap is demonstrated in nine of ten hosted trials. Separate
    probes in pair 1 Go leave completion order unresolved. The report now

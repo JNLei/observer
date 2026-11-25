@@ -3,6 +3,7 @@ mod admission;
 mod api;
 mod authority;
 mod logs;
+mod otlp_json;
 mod query;
 mod storage;
 
@@ -25,6 +26,7 @@ enum Error {
     ReadTimeout,
     Deadline,
     Unavailable,
+    SourceBudget,
     State,
     Internal,
 }

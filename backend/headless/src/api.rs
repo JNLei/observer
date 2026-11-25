@@ -1,7 +1,7 @@
 use crate::{
     admission::Lane,
     authority::{Action, Authority, Key},
-    logs::{prepare, BYTE_LIMIT},
+    logs::{now_ns, prepare, BYTE_LIMIT},
     query::{self, Query},
     storage::{LogStore, StoreError},
     Error, Result,
@@ -62,6 +62,7 @@ impl Error {
             Self::ReadTimeout => (408, "body_timeout"),
             Self::Deadline => (504, "deadline"),
             Self::State | Self::Unavailable => (503, "unavailable"),
+            Self::SourceBudget => (503, "source_response_byte_limit"),
             Self::Internal => (500, "internal_error"),
         }
     }
@@ -90,6 +91,9 @@ struct RpcStatus {
 }
 fn otlp_error(err: Error, is_json: bool) -> Reply {
     let (code, message) = err.response();
+    otlp_status(code, message, is_json)
+}
+fn otlp_status(code: u16, message: &str, is_json: bool) -> Reply {
     if is_json {
         json_reply(code, json!({"message":message}))
     } else {
@@ -103,8 +107,9 @@ fn otlp_error(err: Error, is_json: bool) -> Reply {
         )
     }
 }
+const RECORD_REJECTION: &str =
+    "record outside the write time window or invalid timestamp, severity or correlation ID";
 fn otlp_ok(rejected: usize, is_json: bool) -> Reply {
-    let message = "invalid timestamp, severity or correlation identifier";
     if is_json {
         return json_reply(
             200,
@@ -112,7 +117,7 @@ fn otlp_ok(rejected: usize, is_json: bool) -> Reply {
                 json!({})
             } else {
                 json!({"partialSuccess":{
-            "rejectedLogRecords":rejected.to_string(),"errorMessage":message}})
+            "rejectedLogRecords":rejected.to_string(),"errorMessage":RECORD_REJECTION}})
             },
         );
     }
@@ -122,7 +127,7 @@ fn otlp_ok(rejected: usize, is_json: bool) -> Reply {
         ExportLogsServiceResponse {
             partial_success: (rejected != 0).then(|| ExportLogsPartialSuccess {
                 rejected_log_records: rejected as i64,
-                error_message: message.into(),
+                error_message: RECORD_REJECTION.into(),
             }),
         }
         .encode_to_vec(),
@@ -208,17 +213,21 @@ async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) 
         .map_err(|_| Error::Busy)?;
     // The task owns the reservation even if its HTTP caller disconnects during decode or storage I/O.
     let job = tokio::spawn(async move {
-        let batch = tokio::task::spawn_blocking(move || {
+        let mut batch = tokio::task::spawn_blocking(move || {
             let _decoder = decoder;
             prepare(&raw, gzip, is_json, &grant)
         })
         .await
         .map_err(|_| Error::Internal)??;
         let grant = app.authority.authorize(&key, None, Action::Ingest)?;
-        let (n, rejected) = (batch.records.len(), batch.rejected);
+        let total = batch.rejected + batch.records.len();
+        let window = app.store.write_time_range(now_ns());
+        batch.records.retain(|r| window.contains(&r.timestamp_ns.0));
+        let n = batch.records.len();
+        let rejected = total - n;
         if n == 0 {
             let resp = if rejected > 0 {
-                otlp_error(Error::Invalid, is_json)
+                otlp_status(400, RECORD_REJECTION, is_json)
             } else {
                 otlp_ok(0, is_json)
             };
@@ -278,6 +287,7 @@ async fn read_logs(
         match store.scan(&grant, &q2, deadline).await {
             Ok(page) => Ok(page),
             Err(StoreError::Deadline) => Err(Error::Deadline),
+            Err(StoreError::ResponseBudget) => Err(Error::SourceBudget),
             Err(e) => {
                 if e == StoreError::Indeterminate {
                     slot.retain();
@@ -297,7 +307,7 @@ async fn read_logs(
             200,
             query::result(tenant, source, &q, page, evidence),
         )),
-        Err(err @ (Error::Unavailable | Error::Deadline)) => Ok(json_reply(
+        Err(err @ (Error::Unavailable | Error::Deadline | Error::SourceBudget)) => Ok(json_reply(
             err.response().0,
             json!({"outcome":"unavailable","reason":err.response().1,"requested_range":q.range(),
                 "effective_range":null,"source_query_range":null,"coverage":"unknown","source":source}),
