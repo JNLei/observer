@@ -138,6 +138,8 @@ fn span_result(
         let parent = (!s.parent_span_id.is_empty()).then(|| hex::encode(&s.parent_span_id));
         let relation = if parent.is_none() {
             "no_parent_reported"
+        } else if s.parent_span_id == s.span_id {
+            "self_reference"
         } else {
             match multiplicity.get(&s.parent_span_id) {
                 None => "not_in_returned_page",
@@ -187,7 +189,7 @@ async fn span_page(
     tenant: &str,
     q: &Query,
     deadline: Instant,
-) -> Result<Value> {
+) -> Result<ChargedPage> {
     let authority = app.authority.clone();
     let key = key.clone();
     let target = tenant.to_owned();
@@ -227,39 +229,72 @@ pub(super) async fn read(
     q.validate()?;
     let deadline = started + Duration::from_millis(q.deadline_ms);
     let trace = span_page(&app, &key, tenant, &q, deadline);
-    if !evidence {
-        let result = trace.await;
-        app.authority
-            .trace_grant(&key, Some(tenant), Action::QueryTraces)?;
-        return Ok(match result {
-            Ok(v) => json_reply(200, v),
-            Err(e) => json_reply(e.response().0, unavailable(app.trace_store.source(), &q, e)),
-        });
-    }
-    let (spans, logs) = tokio::join!(trace, logs_page(&app, &key, tenant, &q, true, deadline));
+    let result = if evidence {
+        let (spans, logs) = tokio::join!(trace, logs_page(&app, &key, tenant, &q, true, deadline));
+        let mut reservations = Vec::with_capacity(2);
+        let mut source_value = |result: Result<ChargedPage>, source| match result {
+            Ok((value, slot)) => {
+                reservations.push(slot);
+                value
+            }
+            Err(e) => unavailable(source, &q, e),
+        };
+        let spans = source_value(spans, app.trace_store.source());
+        let logs = source_value(logs, app.store.source());
+        let range = q.range();
+        if reservations.is_empty() {
+            // Both sources failed. This fixed-size diagnostic needs no assembly worker.
+            Ok(evidence_reply(trace_id, range, spans, logs))
+        } else {
+            let id = trace_id.to_owned();
+            build_query_reply(deadline, reservations, move || {
+                evidence_reply(&id, range, spans, logs)
+            })
+            .await
+        }
+    } else {
+        page_reply(trace.await, deadline).await
+    };
+    // Recheck access to the finished bytes, including a revocation during assembly.
     app.authority
         .trace_grant(&key, Some(tenant), Action::QueryTraces)?;
-    app.authority.authorize(&key, Some(tenant), Action::Query)?;
-    let both_unavailable = spans.is_err() && logs.is_err();
-    let spans = spans.unwrap_or_else(|e| unavailable(app.trace_store.source(), &q, e));
-    let logs = logs.unwrap_or_else(|e| unavailable(app.store.source(), &q, e));
+    if evidence {
+        app.authority.authorize(&key, Some(tenant), Action::Query)?;
+    }
+    Ok(match check_deadline(deadline).and(result) {
+        Ok(reply) => reply,
+        Err(e) => {
+            let source = if evidence {
+                "trace_evidence"
+            } else {
+                app.trace_store.source()
+            };
+            json_reply(e.response().0, unavailable(source, &q, e))
+        }
+    })
+}
+
+fn evidence_reply(trace_id: &str, range: Value, spans: Value, logs: Value) -> Reply {
+    let mut by_span_id: HashMap<&str, Vec<&Value>> = HashMap::new();
+    for span in spans["spans"].as_array().into_iter().flatten() {
+        if let Some(id) = span["identity"]["span_id"].as_str() {
+            by_span_id.entry(id).or_default().push(&span["record_id"]);
+        }
+    }
     let mut relationships = Vec::new();
     if let Some(rows) = logs["records"].as_array() {
         for row in rows {
-            let candidates: Vec<_> = spans["spans"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|s| {
-                    row["span_id"].is_string() && s["identity"]["span_id"] == row["span_id"]
-                })
-                .map(|s| &s["record_id"])
-                .collect();
+            let candidates = row["span_id"]
+                .as_str()
+                .and_then(|id| by_span_id.get(id))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             relationships.push(json!({"method":"exact_trace_id","basis":"producer_supplied_ids",
                 "log_record_id":row["id"],"trace_id":trace_id,"matching_span_record_ids":candidates}));
         }
     }
     let outcomes = [&spans["outcome"], &logs["outcome"]];
+    let both_unavailable = outcomes.iter().all(|v| *v == "unavailable");
     let outcome = if both_unavailable {
         "unavailable"
     } else if outcomes
@@ -272,10 +307,10 @@ pub(super) async fn read(
     } else {
         "matches"
     };
-    Ok(json_reply(
-        if both_unavailable { 503 } else { 200 },
-        json!({"schema_version":"v0.3","operation":"trace_evidence",
-        "outcome":outcome,"coverage":"unknown","requested_range":q.range(),"traces":spans,"logs":logs,
-        "relationships":relationships}),
-    ))
+    let mut envelope = json!({"schema_version":"v0.3","operation":"trace_evidence",
+        "outcome":outcome,"coverage":"unknown","requested_range":range});
+    envelope["traces"] = spans;
+    envelope["logs"] = logs;
+    envelope["relationships"] = Value::Array(relationships);
+    json_reply(if both_unavailable { 503 } else { 200 }, envelope)
 }

@@ -6,7 +6,7 @@ import gzip
 from http.server import BaseHTTPRequestHandler
 import json
 import os
-import re
+import socket
 import sqlite3
 import struct
 import subprocess
@@ -50,6 +50,26 @@ def protobuf_parent(t):
               + wire_field(5, b"checkout") + b'\x39' + struct.pack('<Q', t)
               + b'\x41' + struct.pack('<Q', t + 150))
     return wire_field(1, wire_field(2, wire_field(2, fields)))
+
+
+def stored_payload(wire):
+    # Read the adapter's KeyValue.value -> AnyValue.string_value. Protobuf
+    # length bytes can themselves be valid base64 characters.
+    def read_field(data, tag):
+        assert data[0] == (tag << 3 | 2)
+        size = 0
+        for i, byte in enumerate(data[1:6]):
+            size |= (byte & 127) << (7 * i)
+            if byte < 128:
+                start = i + 2
+                assert start + size <= len(data)
+                return data[start:start + size]
+        raise AssertionError("invalid fixture field length")
+
+    key = wire_field(1, b"observe.unit")
+    _, marker, value = wire.partition(key)
+    assert marker
+    return read_field(read_field(value, 2), 1)
 
 
 class TraceHarness(Local):
@@ -181,10 +201,27 @@ class RealStores(TraceHarness):
                 self.assertEqual(self.call(ref["path"], self.bravo["token"], ref["query"])[0], 403)
 
         # Conflicting IDs remain distinct submitted records, even across producer credentials.
-        self.assertEqual(self.send(export(span(t + 3, PARENT, "")), self.writer)[0], 200)
+        duplicate = dict(span(t, PARENT, ""), kind=0, name="separate-submission")
+        self.assertEqual(self.send(export(duplicate), self.writer)[0], 200)
         conflict = self.visible(3)
         self.assertIn("repeated_span_id", conflict["limitations"])
         self.assertEqual(conflict["spans"][-1]["parent_resolution"], "ambiguous")
+        # Resolve both conflicting parents *after* the collision. Compare with
+        # their submitted data and issued credentials independently of the page.
+        parents = {s["record_id"] for s in conflict["spans"] if s["identity"]["span_id"] == PARENT}
+        self.assertEqual(len(parents), 2)
+        resolved_parents = set()
+        for ref in conflict["references"]:
+            if ref["record_id"] in parents:
+                code, result, _ = self.call(ref["path"], self.reader["token"], ref["query"])
+                self.assertEqual((code, len(result["spans"])), (200, 1))
+                fact = result["spans"][0]
+                otlp = fact["otlp"]["scopeSpans"][0]["spans"][0]
+                self.assertEqual((fact["record_id"], otlp["traceId"], otlp["spanId"], otlp.get("kind", 0),
+                                  otlp["startTimeUnixNano"]), (ref["record_id"], TRACE, PARENT, 0, str(t)))
+                resolved_parents.add((fact["identity"]["producer_id"], fact["identity"]["service"], otlp["name"]))
+        self.assertEqual(resolved_parents, {(checkout["id"], "checkout", "checkout"),
+                                            (self.writer["id"], "payments", "separate-submission")})
         self.assertEqual(self.trace(q=dict(self.q, limit=1))[1]["outcome"], "partial")
         self.assertEqual(self.trace(trace_id=OTHER)[1]["outcome"], "no_matches")
         # Shared scope/resource context must survive batching and output byte limits.
@@ -218,6 +255,41 @@ class RealStores(TraceHarness):
         ref = whole["references"][0]
         self.revoke("alpha", self.reader)
         self.assertEqual(self.call(ref["path"], self.reader["token"], ref["query"])[0], 401)
+
+    def test_self_parent_remains_an_attributed_claim(self):
+        self.start_traces()
+        self.assertEqual(self.send(export(span(self.t, SPAN, SPAN)))[0], 200)
+        raw = self.visible(1)
+        code, evidence, _ = self.trace(evidence=True)
+        self.assertEqual(code, 200)
+        for page in (raw, evidence["traces"]):
+            fact, = page["spans"]
+            self.assertEqual(fact["parent_resolution"], "self_reference")
+            self.assertEqual(fact["identity"]["parent_span_id"], SPAN)
+            self.assertEqual(fact["otlp"]["scopeSpans"][0]["spans"][0]["parentSpanId"], SPAN)
+            self.assertEqual(fact["identity"]["producer_id"], self.writer["id"])
+
+    def test_same_tenant_log_becomes_visible_during_trace_dispatch(self):
+        test_headless.RealLoki.start_loki(self)
+        writer = self.issue("alpha", "checkout", "ingest")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sink:
+            sink.bind(str(self.state / "traces.sock"))
+            sink.listen(1)
+            sink.settimeout(3)
+            with concurrent.futures.ThreadPoolExecutor(1) as clients:
+                trace_write = clients.submit(self.send, export(span(self.t)))
+                peer, _ = sink.accept()
+                with peer:
+                    peer.settimeout(2)
+                    with peer.makefile("rb") as stream:
+                        self.assertEqual(stream.readline(256).split()[:2], [b"POST", b"/insert/opentelemetry/v1/traces"])
+                    code, _, _ = self.call("/v1/logs", writer["token"], envelope([log(self.t, "during trace write")]))
+                    self.assertEqual(code, 200)
+                    page = test_headless.RealLoki.visible(self, "alpha", self.reader["token"], self.q, 1)
+                    self.assertEqual(page["records"][0]["producer_id"], writer["id"])
+                    self.assertFalse(trace_write.done())
+                code, _, headers = trace_write.result(timeout=6)
+                self.assertEqual((code, headers["x-observe-unknown-records"]), (503, "1"))
 
 
 class TraceFailures(TraceHarness):
@@ -263,10 +335,10 @@ class TraceFailures(TraceHarness):
         self.assertEqual(path, "/insert/opentelemetry/v1/traces")
         self.assertNotIn(SECRET.encode(), raw)
         # Also inspect the adapter's base64 copy of the captured OTLP unit.
-        candidates = re.findall(rb'[A-Za-z0-9+/=]{40,}', raw)
-        decoded = [base64.b64decode(s, validate=True) for s in candidates]
-        self.assertTrue(any(bytes.fromhex(TRACE) in s for s in decoded))
-        self.assertTrue(all(SECRET.encode() not in s and b"claimed-service" not in s for s in decoded))
+        decoded = base64.b64decode(stored_payload(raw), validate=True)
+        self.assertIn(bytes.fromhex(TRACE), decoded)
+        self.assertNotIn(SECRET.encode(), decoded)
+        self.assertNotIn(b"claimed-service", decoded)
         self.assertEqual(self.send(export(span(self.t)))[0], 200)
         self.assertNotEqual(self.requests[-1][0], account)
         before = len(self.requests)
@@ -291,18 +363,18 @@ class TraceFailures(TraceHarness):
         self.assertEqual(self.trace(reader=legacy)[0], 403)
         upgraded = self.issue("alpha", "writer", "ingest_traces")
         self.assertEqual(self.send(export(span(self.t)), upgraded)[0], 200)
-        for wire in re.findall(rb'[A-Za-z0-9+/=]{40,}', self.requests[-1][2]):
-            self.assertNotIn(SECRET.encode(), base64.b64decode(wire, validate=True))
+        self.assertNotIn(SECRET.encode(), base64.b64decode(stored_payload(self.requests[-1][2]), validate=True))
+
+    def storage_row(self, submitted):
+        self.assertEqual(self.send(export(submitted))[0], 200)
+        payload = stored_payload(self.requests[-1][2])
+        return {"trace_id": TRACE, "span_id": submitted["spanId"], "start_time_unix_nano": submitted["startTimeUnixNano"],
+                "end_time_unix_nano": submitted["endTimeUnixNano"], "span_attr:observe.tenant": "alpha",
+                "span_attr:observe.unit": payload.decode(), "span_attr:observe.id": "22"*16,
+                "span_attr:observe.producer": self.writer["id"], "span_attr:observe.service": "payments"}
 
     def test_malformed_and_mismatched_storage_rows_fail_closed(self):
-        source_span = span(self.t)
-        self.assertEqual(self.send(export(source_span))[0], 200)
-        payload = next(s for s in re.findall(rb'[A-Za-z0-9+/=]{40,}', self.requests[-1][2])
-                       if SECRET.encode() in base64.b64decode(s, validate=True))
-        row = {"trace_id": TRACE, "span_id": SPAN, "start_time_unix_nano": str(self.t),
-               "end_time_unix_nano": str(self.t + 123), "span_attr:observe.tenant": "alpha",
-               "span_attr:observe.unit": payload.decode(), "span_attr:observe.id": "22"*16,
-               "span_attr:observe.producer": self.writer["id"], "span_attr:observe.service": "payments"}
+        row = self.storage_row(span(self.t))
         self.answer = json.dumps(row).encode()
         self.assertEqual(len(self.trace()[1]["spans"]), 1)
         for field, wrong in (("span_attr:observe.tenant", "bravo"), ("trace_id", OTHER), ("span_id", PARENT),
@@ -317,6 +389,29 @@ class TraceFailures(TraceHarness):
         self.assertEqual(self.trace()[1]["reason"], "source_response_byte_limit")
         self.answer = b""
         self.assertEqual(self.trace()[0], 200)
+
+    def test_cutoff_requires_verified_rows(self):
+        large = dict(span(self.t), attributes=[attr("padding", "x" * 8000)])
+        valid = self.storage_row(large)
+        outside = self.storage_row(dict(large, startTimeUnixNano=str(self.t - 1)))
+        foreign = dict(valid, **{"span_attr:observe.tenant": "bravo"})
+        size = len(valid["span_attr:observe.unit"])
+        for prefix, limit, reason in ((1, 1, "row_limit"), (128 * 1024 // size, 100, "capture_byte_limit")):
+            rows = [dict(valid, **{"span_attr:observe.id": f"{i + 1:032x}"}) for i in range(prefix)]
+            q = dict(self.q, limit=limit)
+            for sentinel in (valid, outside, foreign):
+                with self.subTest(cutoff=reason, tenant=sentinel["span_attr:observe.tenant"],
+                                  start=sentinel["start_time_unix_nano"]):
+                    self.answer = b"\n".join(json.dumps(r).encode() for r in [*rows, sentinel])
+                    code, data, _ = self.trace(q=q)
+                    if sentinel is valid:
+                        self.assertEqual((code, data["outcome"], len(data["spans"])), (200, "partial", prefix))
+                        self.assertIn(reason, data["limitations"])
+                    else:
+                        self.assertEqual((code, data["outcome"]), (503, "unavailable"))
+                        code, evidence, _ = self.trace(q=q, evidence=True)
+                        self.assertEqual((code, evidence["traces"]["outcome"]), (503, "unavailable"))
+                        self.assertNotIn(reason, json.dumps(evidence))
 
     def test_invalid_ids_and_bounded_decode(self):
         for field, value in (("spanId", "aabb"), ("traceId", "0"*32), ("parentSpanId", "00"*8),
@@ -336,7 +431,7 @@ class TraceFailures(TraceHarness):
         self.assertEqual(self.trace(q=dict(self.q, record_id="invalid"))[0], 400)
         self.assertEqual(len(self.requests), 0)
 
-    def test_offline_ambiguous_and_separate_log_capacity(self):
+    def test_offline_ambiguous_and_peer_trace_capacity(self):
         raw = export(span(self.t))
         sock = self.state / "traces.sock"
         os.rename(sock, self.state / "moved.sock")
@@ -375,6 +470,14 @@ class TraceFailures(TraceHarness):
             self.revoke("alpha", self.reader)
             self.pause.set()
             self.assertEqual(future.result()[0], 401)
+
+    def test_shared_evidence_deadline_expires_with_source_work_outstanding(self):
+        self.pause.clear()
+        code, data, _ = self.trace(q=dict(self.q, deadline_ms=100), evidence=True)
+        self.assertEqual((code, data["outcome"], data["reason"]), (504, "unavailable", "deadline"))
+        self.assertNotIn("relationships", data)
+        self.assertTrue(self.arrived.is_set())
+        self.assertEqual(self.trace()[0], 429)
 
 
 if __name__ == "__main__":

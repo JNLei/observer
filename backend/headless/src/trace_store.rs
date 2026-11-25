@@ -247,16 +247,20 @@ fn decode_page(
         if index > q.limit {
             return Err(StoreError::Response);
         }
+        let size = row.payload.len();
+        // Even a discarded row can disclose existence through a cutoff.
+        // Verify one bounded unit at a time, retaining only the returned prefix.
+        let record = row.verify(grant, q, start, end)?;
         if truncation.is_some() {
             continue;
         }
-        payload_bytes += row.payload.len();
+        payload_bytes += size;
         if index == q.limit {
             truncation = Some(Truncation::RowLimit);
         } else if payload_bytes > PAGE_PAYLOAD_BYTES {
             truncation = Some(Truncation::ResponseByteLimit);
         } else {
-            records.push(row.verify(grant, q, start, end)?);
+            records.push(record);
         }
     }
     records.sort_by(|a, b| {

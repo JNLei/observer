@@ -1,5 +1,5 @@
 use crate::{
-    admission::Lane,
+    admission::{Lane, Reservation},
     authority::{Action, Authority, Key},
     delivery,
     identity::now_ns,
@@ -298,13 +298,13 @@ async fn source_job<T: Send + 'static>(
     tenant: &str,
     deadline: Instant,
     work: impl std::future::Future<Output = Result<crate::storage::StoreResult<T>>> + Send + 'static,
-) -> Result<T> {
+) -> Result<(T, Reservation)> {
     let mut slot = lane.enter(tenant)?;
     let task = tokio::spawn(async move {
         if Instant::now() >= deadline {
             return Err(Error::Deadline);
         }
-        work.await?.map_err(|e| match e {
+        let page = work.await?.map_err(|e| match e {
             StoreError::Deadline => Error::Deadline,
             StoreError::ResponseBudget => Error::SourceBudget,
             StoreError::Indeterminate => {
@@ -312,12 +312,48 @@ async fn source_job<T: Send + 'static>(
                 Error::Unavailable
             }
             _ => Error::Unavailable,
-        })
+        })?;
+        Ok((page, slot))
     });
     timeout_at(deadline, task)
         .await
         .map_err(|_| Error::Deadline)?
         .map_err(|_| Error::Internal)?
+}
+
+type ChargedPage = (Value, Reservation);
+
+fn check_deadline(deadline: Instant) -> Result<()> {
+    if Instant::now() >= deadline {
+        Err(Error::Deadline)
+    } else {
+        Ok(())
+    }
+}
+
+async fn build_query_reply(
+    deadline: Instant,
+    reservations: Vec<Reservation>,
+    build: impl FnOnce() -> Reply + Send + 'static,
+) -> Result<Reply> {
+    check_deadline(deadline)?;
+    // A disconnect or timeout drops the waiter. The worker keeps the source
+    // charges through relationship matching, envelope construction and serialization.
+    let work = blocking(move || {
+        let _reservations = reservations;
+        check_deadline(deadline)?;
+        Ok(build())
+    });
+    let reply = timeout_at(deadline, work)
+        .await
+        .map_err(|_| Error::Deadline)??;
+    check_deadline(deadline)?;
+    Ok(reply)
+}
+
+async fn page_reply(page: Result<ChargedPage>, deadline: Instant) -> Result<Reply> {
+    let (value, reservation) = page?;
+    build_query_reply(deadline, vec![reservation], move || json_reply(200, value)).await
 }
 
 async fn logs_page(
@@ -327,18 +363,31 @@ async fn logs_page(
     q: &Query,
     evidence: bool,
     deadline: Instant,
-) -> Result<Value> {
+) -> Result<ChargedPage> {
     let authority = app.authority.clone();
     let key = key.clone();
     let target = tenant.to_owned();
     let query = q.clone();
     let store = app.store.clone();
-    let page = source_job(&app.reads, tenant, deadline, async move {
+    source_job(&app.reads, tenant, deadline, async move {
         let grant = authority.authorize(&key, Some(&target), Action::Query)?;
-        Ok(store.scan(&grant, &query, deadline).await)
+        let page = match store.scan(&grant, &query, deadline).await {
+            Ok(page) => page,
+            Err(e) => return Ok(Err(e)),
+        };
+        let value = blocking(move || {
+            Ok(query::result(
+                &target,
+                store.source(),
+                &query,
+                page,
+                evidence,
+            ))
+        })
+        .await?;
+        Ok(Ok(value))
     })
-    .await?;
-    Ok(query::result(tenant, app.store.source(), q, page, evidence))
+    .await
 }
 
 fn unavailable(source: &str, q: &Query, err: Error) -> Value {
@@ -356,10 +405,11 @@ async fn read_logs(
 ) -> Result<Reply> {
     q.validate()?;
     let deadline = started + Duration::from_millis(q.deadline_ms);
-    let result = logs_page(&app, &key, tenant, &q, evidence, deadline).await;
+    let page = logs_page(&app, &key, tenant, &q, evidence, deadline).await;
+    let result = page_reply(page, deadline).await;
     app.authority.authorize(&key, Some(tenant), Action::Query)?;
-    match result {
-        Ok(value) => Ok(json_reply(200, value)),
+    match check_deadline(deadline).and(result) {
+        Ok(reply) => Ok(reply),
         Err(err @ (Error::Unavailable | Error::Deadline | Error::SourceBudget)) => Ok(json_reply(
             err.response().0,
             unavailable(app.store.source(), &q, err),
@@ -486,5 +536,52 @@ pub async fn serve(listener: TcpListener, app: Arc<App>) -> Result<()> {
             )
             .await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn timed_out_assembly_keeps_both_source_reservations_until_it_finishes() {
+        let traces = Lane::new(2, 1);
+        let logs = Lane::new(2, 1);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let (_, trace_slot) = source_job(&traces, "alpha", deadline, async { Ok(Ok(())) })
+            .await
+            .unwrap();
+        let (_, log_slot) = source_job(&logs, "alpha", deadline, async { Ok(Ok(())) })
+            .await
+            .unwrap();
+        let (entered, assembling) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let response = tokio::spawn(build_query_reply(
+            deadline,
+            vec![trace_slot, log_slot],
+            move || {
+                entered.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                json_reply(200, json!({"outcome": "matches"}))
+            },
+        ));
+
+        assembling.await.unwrap();
+        for lane in [&traces, &logs] {
+            assert!(matches!(lane.enter("alpha"), Err(Error::Busy)));
+            assert!(lane.enter("bravo").is_ok());
+        }
+        assert!(matches!(response.await.unwrap(), Err(Error::Deadline)));
+        for lane in [&traces, &logs] {
+            assert!(matches!(lane.enter("alpha"), Err(Error::Busy)));
+        }
+        release.send(()).unwrap();
+        timeout(Duration::from_secs(2), async {
+            while traces.enter("alpha").is_err() || logs.enter("alpha").is_err() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }
