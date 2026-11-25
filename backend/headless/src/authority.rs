@@ -26,6 +26,7 @@ pub fn random_hex<const N: usize>() -> Result<String> {
     Ok(hex::encode(bytes))
 }
 
+#[derive(Clone)]
 pub struct Key([u8; 32]);
 impl Key {
     fn from_secret(secret: &[u8]) -> Self {
@@ -58,6 +59,23 @@ pub enum Capture {
 pub enum Action {
     Ingest,
     Query,
+    IngestTraces,
+    QueryTraces,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceCapture {
+    #[default]
+    MetadataOnly,
+    Full,
+}
+
+#[derive(Clone)]
+pub struct TraceGrant {
+    pub principal: Grant,
+    pub account: u32,
+    pub capture: TraceCapture,
 }
 
 #[derive(Clone)]
@@ -78,6 +96,8 @@ impl Grant {
 pub struct TenantConfig {
     pub tenant: String,
     pub capture: Capture,
+    #[serde(default)]
+    pub trace_capture: TraceCapture,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +158,19 @@ impl Authority {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         db.busy_timeout(Duration::from_millis(if initialize { 2000 } else { 100 }))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
+        // Additive schema. Existing log credentials have no implicit trace permissions.
+        db.execute_batch(
+            "BEGIN IMMEDIATE;
+            CREATE TABLE IF NOT EXISTS trace_tenants (
+                account INTEGER PRIMARY KEY AUTOINCREMENT CHECK(account BETWEEN 1 AND 4294967295),
+                tenant TEXT NOT NULL UNIQUE REFERENCES tenants(name), full_capture INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS trace_permissions (
+                subject TEXT PRIMARY KEY REFERENCES credentials(id) ON DELETE CASCADE,
+                write_spans INTEGER NOT NULL, read_spans INTEGER NOT NULL
+            );
+            COMMIT;",
+        )?;
         Ok(Self(Mutex::new(db)))
     }
 
@@ -239,6 +272,10 @@ impl Authority {
         if changed == 0 {
             return Err(Error::Conflict);
         }
+        tx.execute(
+            "INSERT INTO trace_tenants(tenant,full_capture) VALUES(?1,?2)",
+            params![spec.tenant, spec.trace_capture == TraceCapture::Full],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -249,8 +286,12 @@ impl Authority {
         Self::require_owner(&tx, key)?;
         if !name_ok(&spec.service)
             || spec.permissions.is_empty()
-            || spec.permissions.len() > 2
-            || (spec.permissions.len() == 2 && spec.permissions[0] == spec.permissions[1])
+            || spec.permissions.len() > 4
+            || spec
+                .permissions
+                .iter()
+                .enumerate()
+                .any(|(i, p)| spec.permissions[..i].contains(p))
         {
             return Err(Error::Invalid);
         }
@@ -270,6 +311,20 @@ impl Authority {
         )?;
         if changed == 0 {
             return Err(Error::Missing);
+        }
+        let write = spec.permissions.contains(&Action::IngestTraces);
+        let read = spec.permissions.contains(&Action::QueryTraces);
+        if write || read {
+            // Upgrade v0.2 tenants on their first explicit trace grant.
+            tx.execute(
+                "INSERT INTO trace_tenants(tenant,full_capture) SELECT ?1,0
+                        WHERE NOT EXISTS(SELECT 1 FROM trace_tenants WHERE tenant=?1)",
+                [tenant],
+            )?;
+            tx.execute(
+                "INSERT INTO trace_permissions VALUES(?1,?2,?3)",
+                params![id, write, read],
+            )?;
         }
         tx.commit()?;
         Ok(Credential { id, token })
@@ -308,33 +363,88 @@ impl Authority {
         f(&grant)
     }
 
-    pub fn authorize(&self, key: &Key, target: Option<&str>, action: Action) -> Result<Grant> {
+    pub fn trace_grant(
+        &self,
+        key: &Key,
+        target: Option<&str>,
+        action: Action,
+    ) -> Result<TraceGrant> {
         let db = self.db()?;
-        let (grant, ingest, query) = db
+        let (principal, _, _) = verified_principal(&db, key, target)?;
+        let (account, full, write, read) = db
             .query_row(
-                "SELECT c.tenant,c.id,c.service,t.text_body,c.ingest,c.query_logs
-             FROM credentials c JOIN tenants t ON t.name=c.tenant WHERE c.digest=?1",
-                [key.0.as_slice()],
+                "SELECT tt.account, tt.full_capture, p.write_spans, p.read_spans
+             FROM trace_tenants tt JOIN trace_permissions p ON p.subject=?2 WHERE tt.tenant=?1",
+                params![principal.tenant(), principal.subject],
                 |row| {
                     Ok((
-                        read_grant(row)?,
-                        row.get::<_, bool>(4)?,
-                        row.get::<_, bool>(5)?,
+                        row.get(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
                     ))
                 },
             )
             .optional()?
-            .ok_or(Error::Unauthenticated)?;
-        if target.is_some_and(|t| t != grant.tenant)
-            || !(match action {
-                Action::Ingest => ingest,
-                Action::Query => query,
-            })
-        {
+            .ok_or(Error::Denied)?;
+        let permitted = match action {
+            Action::IngestTraces => write,
+            Action::QueryTraces => read,
+            _ => false,
+        };
+        if !permitted {
+            return Err(Error::Denied);
+        }
+        Ok(TraceGrant {
+            principal,
+            account,
+            capture: if full {
+                TraceCapture::Full
+            } else {
+                TraceCapture::MetadataOnly
+            },
+        })
+    }
+
+    pub fn authorize(&self, key: &Key, target: Option<&str>, action: Action) -> Result<Grant> {
+        let db = self.db()?;
+        let (grant, ingest, query) = verified_principal(&db, key, target)?;
+        let permitted = match action {
+            Action::Ingest => ingest,
+            Action::Query => query,
+            _ => false,
+        };
+        if !permitted {
             return Err(Error::Denied);
         }
         Ok(grant)
     }
+}
+
+fn verified_principal(
+    db: &Connection,
+    key: &Key,
+    target: Option<&str>,
+) -> Result<(Grant, bool, bool)> {
+    let (grant, ingest, query) = db
+        .query_row(
+            "SELECT c.tenant,c.id,c.service,t.text_body,c.ingest,c.query_logs
+             FROM credentials c JOIN tenants t ON t.name=c.tenant WHERE c.digest=?1",
+            [key.0.as_slice()],
+            |row| {
+                Ok((
+                    read_grant(row)?,
+                    row.get::<_, bool>(4)?,
+                    row.get::<_, bool>(5)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(Error::Unauthenticated)?;
+    if target.is_some_and(|tenant| tenant != grant.tenant()) {
+        return Err(Error::Denied);
+    }
+    Ok((grant, ingest, query))
 }
 
 fn read_grant(row: &rusqlite::Row<'_>) -> rusqlite::Result<Grant> {

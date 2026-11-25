@@ -1,6 +1,8 @@
 # AI-native observability platform
 
-Headless Backend v0.2 accepts authenticated OTLP/HTTP logs, applies tenant capture policy and commits them to a bounded local buffer. The backend replays eligible logs after a process restart or Loki outage. Producer success requires Loki 204. External clients can inspect tenant delivery counts, search raw logs and resolve evidence references. [Local setup and recovery tests](docs/implementation/headless-v0.2.md) and [API examples](docs/implementation/headless-v0.1.md#bootstrap-and-provision-two-tenants).
+Headless Backend v0.3 adds authenticated OTLP traces, distributed span retrieval, and trace-to-log evidence with per-record references. Run the two-tenant workflow with the Rust backend, Loki and VictoriaTraces. [v0.3 setup, API and verification](docs/implementation/headless-v0.3.md).
+
+The v0.2 log path accepts authenticated OTLP/HTTP logs, applies tenant capture policy and commits them to a bounded local buffer. The backend replays eligible logs after a process restart or Loki outage. Producer success requires Loki 204. External clients can inspect tenant delivery counts, search raw logs and resolve evidence references. [Local setup and recovery tests](docs/implementation/headless-v0.2.md) and [API examples](docs/implementation/headless-v0.1.md#bootstrap-and-provision-two-tenants).
 
 The [v0.5.1 architecture](docs/architecture/AI_Native_Observability_Architecture_Spec_v0.5.1.md)
 remains authoritative. The [roadmap](docs/implementation/roadmap.md) records

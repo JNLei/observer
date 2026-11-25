@@ -62,11 +62,13 @@ jobs:
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - name: Format, lint, build and test
         run: ./scripts/check.sh
-      - name: Exercise the headless product against pinned Loki
+      - name: Exercise the headless product against Loki and VictoriaTraces
         run: |
           python3 benchmarks/ingest/otlp/fetch_tools.py
           python3 backend/headless/tests/test_headless.py -v RealLoki
           python3 backend/headless/tests/test_recovery.py -v Custody
+          python3 benchmarks/ingest/otlp/fetch_tools.py --traces-only
+          python3 backend/headless/tests/test_traces.py -v RealStores
       - name: Exercise race-instrumented receivers
         run: ./scripts/check-race.sh
       - name: Run the synthetic smoke

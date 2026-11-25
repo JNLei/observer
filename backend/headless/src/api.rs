@@ -2,10 +2,13 @@ use crate::{
     admission::Lane,
     authority::{Action, Authority, Key},
     delivery,
-    logs::{now_ns, prepare, BYTE_LIMIT},
+    identity::now_ns,
+    logs::prepare,
+    otlp::BYTE_LIMIT,
     query::{self, Query},
     spool::{blocking, Outcome, Spool},
     storage::{LogStore, StoreError},
+    trace_store::TraceStore,
     Error, Result,
 };
 use bytes::Bytes;
@@ -36,16 +39,29 @@ pub struct App {
     pub(crate) authority: Arc<Authority>,
     pub(crate) spool: Arc<Spool>,
     pub(crate) store: Arc<dyn LogStore>,
+    trace_store: Arc<dyn TraceStore>,
+    trace_writes: Arc<Lane>,
+    trace_reads: Arc<Lane>,
+    trace_decoders: Arc<Semaphore>,
     writes: Arc<Lane>,
     reads: Arc<Lane>,
     decoders: Arc<Semaphore>,
 }
 impl App {
-    pub fn new(authority: Authority, spool: Arc<Spool>, store: Arc<dyn LogStore>) -> Self {
+    pub fn new(
+        authority: Authority,
+        spool: Arc<Spool>,
+        store: Arc<dyn LogStore>,
+        trace_store: Arc<dyn TraceStore>,
+    ) -> Self {
         Self {
             authority: Arc::new(authority),
             spool,
             store,
+            trace_store,
+            trace_writes: Lane::new(4, 2),
+            trace_reads: Lane::new(4, 1),
+            trace_decoders: Arc::new(Semaphore::new(2)),
             writes: Lane::new(8, 2),
             reads: Lane::new(4, 1),
             decoders: Arc::new(Semaphore::new(2)),
@@ -195,20 +211,24 @@ fn counts(
     response
 }
 
-async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) -> Result<Reply> {
-    let grant = app.authority.authorize(&key, None, Action::Ingest)?;
-    let slot = app.writes.enter(grant.tenant())?;
+fn encoding(req: &Request<Incoming>) -> Result<bool> {
     if !single(req.headers(), "content-type")?
         .is_some_and(|v| v.eq_ignore_ascii_case(PROTO) || v.eq_ignore_ascii_case(JSON))
     {
         return Err(Error::Media);
     }
-    let gzip = match single(req.headers(), "content-encoding")? {
+    Ok(match single(req.headers(), "content-encoding")? {
         None => false,
         Some(v) if v.eq_ignore_ascii_case("identity") => false,
         Some(v) if v.eq_ignore_ascii_case("gzip") => true,
         _ => return Err(Error::Media),
-    };
+    })
+}
+
+async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) -> Result<Reply> {
+    let grant = app.authority.authorize(&key, None, Action::Ingest)?;
+    let slot = app.writes.enter(grant.tenant())?;
+    let gzip = encoding(&req)?;
     let raw = body(req, BYTE_LIMIT).await?;
     let decoder = app
         .decoders
@@ -273,6 +293,59 @@ async fn ingest(app: Arc<App>, key: Key, req: Request<Incoming>, is_json: bool) 
     job.await.map_err(|_| Error::Internal)?
 }
 
+async fn source_job<T: Send + 'static>(
+    lane: &Arc<Lane>,
+    tenant: &str,
+    deadline: Instant,
+    work: impl std::future::Future<Output = Result<crate::storage::StoreResult<T>>> + Send + 'static,
+) -> Result<T> {
+    let mut slot = lane.enter(tenant)?;
+    let task = tokio::spawn(async move {
+        if Instant::now() >= deadline {
+            return Err(Error::Deadline);
+        }
+        work.await?.map_err(|e| match e {
+            StoreError::Deadline => Error::Deadline,
+            StoreError::ResponseBudget => Error::SourceBudget,
+            StoreError::Indeterminate => {
+                slot.retain();
+                Error::Unavailable
+            }
+            _ => Error::Unavailable,
+        })
+    });
+    timeout_at(deadline, task)
+        .await
+        .map_err(|_| Error::Deadline)?
+        .map_err(|_| Error::Internal)?
+}
+
+async fn logs_page(
+    app: &App,
+    key: &Key,
+    tenant: &str,
+    q: &Query,
+    evidence: bool,
+    deadline: Instant,
+) -> Result<Value> {
+    let authority = app.authority.clone();
+    let key = key.clone();
+    let target = tenant.to_owned();
+    let query = q.clone();
+    let store = app.store.clone();
+    let page = source_job(&app.reads, tenant, deadline, async move {
+        let grant = authority.authorize(&key, Some(&target), Action::Query)?;
+        Ok(store.scan(&grant, &query, deadline).await)
+    })
+    .await?;
+    Ok(query::result(tenant, app.store.source(), q, page, evidence))
+}
+
+fn unavailable(source: &str, q: &Query, err: Error) -> Value {
+    json!({"outcome":"unavailable","reason":err.response().1,"requested_range":q.range(),
+        "effective_range":null,"source_query_range":null,"coverage":"unknown","source":source})
+}
+
 async fn read_logs(
     app: Arc<App>,
     key: Key,
@@ -282,54 +355,20 @@ async fn read_logs(
     started: Instant,
 ) -> Result<Reply> {
     q.validate()?;
-    let grant = app.authority.authorize(&key, Some(tenant), Action::Query)?;
-    let mut slot = app.reads.enter(grant.tenant())?;
     let deadline = started + Duration::from_millis(q.deadline_ms);
-    let store = app.store.clone();
-    let source = store.source();
-    let q2 = q.clone();
-    let key = Arc::new(key);
-    let work_key = key.clone();
-    let worker = app.clone();
-    let task = tokio::spawn(async move {
-        let grant = worker
-            .authority
-            .authorize(&work_key, Some(grant.tenant()), Action::Query)?;
-        if Instant::now() >= deadline {
-            return Err(Error::Deadline);
-        }
-        match store.scan(&grant, &q2, deadline).await {
-            Ok(page) => Ok(page),
-            Err(StoreError::Deadline) => Err(Error::Deadline),
-            Err(StoreError::ResponseBudget) => Err(Error::SourceBudget),
-            Err(e) => {
-                if e == StoreError::Indeterminate {
-                    slot.retain();
-                }
-                Err(Error::Unavailable)
-            }
-        }
-    });
-    // On client deadline the detached task still owns its lane until the source finishes.
-    let result = match timeout_at(deadline, task).await {
-        Ok(joined) => joined.map_err(|_| Error::Internal)?,
-        Err(_) => Err(Error::Deadline),
-    };
+    let result = logs_page(&app, &key, tenant, &q, evidence, deadline).await;
     app.authority.authorize(&key, Some(tenant), Action::Query)?;
     match result {
-        Ok(page) => Ok(json_reply(
-            200,
-            query::result(tenant, source, &q, page, evidence),
-        )),
+        Ok(value) => Ok(json_reply(200, value)),
         Err(err @ (Error::Unavailable | Error::Deadline | Error::SourceBudget)) => Ok(json_reply(
             err.response().0,
-            json!({"outcome":"unavailable","reason":err.response().1,"requested_range":q.range(),
-                "effective_range":null,"source_query_range":null,"coverage":"unknown","source":source}),
+            unavailable(app.store.source(), &q, err),
         )),
         Err(e) => Err(e),
     }
 }
 
+mod trace;
 async fn api(app: Arc<App>, req: Request<Incoming>, started: Instant) -> Result<Reply> {
     let path = req.uri().path().to_owned();
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
@@ -366,6 +405,17 @@ async fn api(app: Arc<App>, req: Request<Incoming>, started: Instant) -> Result<
             app.authority.authorize(&key, Some(tenant), Action::Query)?;
             Ok(json_reply(200, status))
         }
+        (&Method::POST, ["api", "v1", "tenants", tenant, "traces", trace_id])
+        | (&Method::POST, ["api", "v1", "tenants", tenant, "evidence", "traces", trace_id]) => {
+            let evidence = parts[4] == "evidence";
+            app.authority
+                .trace_grant(&key, Some(tenant), Action::QueryTraces)?;
+            if evidence {
+                app.authority.authorize(&key, Some(tenant), Action::Query)?;
+            }
+            let q = json_body(req).await?;
+            trace::read(app, key, tenant, trace_id, q, evidence, started).await
+        }
         (&Method::POST, ["api", "v1", "tenants", tenant, family, "query"])
             if matches!(*family, "logs" | "evidence") =>
         {
@@ -379,7 +429,8 @@ async fn api(app: Arc<App>, req: Request<Incoming>, started: Instant) -> Result<
 
 async fn handle(app: Arc<App>, req: Request<Incoming>) -> Reply {
     let started = Instant::now();
-    let otlp = req.method() == Method::POST && req.uri().path() == "/v1/logs";
+    let is_trace = req.uri().path() == "/v1/traces";
+    let otlp = req.method() == Method::POST && (req.uri().path() == "/v1/logs" || is_trace);
     let is_json = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -396,9 +447,12 @@ async fn handle(app: Arc<App>, req: Request<Incoming>) -> Reply {
             Ok(key) => key,
             Err(e) => return otlp_error(e, is_json),
         };
-        ingest(app, key, req, is_json)
-            .await
-            .unwrap_or_else(|e| otlp_error(e, is_json))
+        if is_trace {
+            trace::ingest(app, key, req, is_json).await
+        } else {
+            ingest(app, key, req, is_json).await
+        }
+        .unwrap_or_else(|e| otlp_error(e, is_json))
     } else {
         api(app, req, started).await.unwrap_or_else(api_error)
     }

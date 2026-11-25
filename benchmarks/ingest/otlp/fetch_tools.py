@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install checksum-pinned local Loki and optional Collector binaries."""
+"""Install checksum-pinned local OSS storage and Collector binaries."""
 
 import argparse
 import hashlib
@@ -25,6 +25,13 @@ ARCHIVES = {
 }
 
 
+TRACE_ARCHIVES = {
+    ("darwin", "arm64"): "b0553e27fa77d979ab14032a3463dab5464776883cfb0bdc61fd071db93b8650",
+    ("darwin", "amd64"): "2847b3a8bafdd6755784fa1d3d5b5e08372587da08bce7098d882670f30b265e",
+    ("linux", "arm64"): "210bc863666865ba9a4ff0a19901318042da0c474d248fec69ca71c07b1e5f7a",
+    ("linux", "amd64"): "789e006d076f3c8b99de7bb1d0277024a7db776db0294d1c27fcc5422d98c4bc",
+}
+
 def install(name, url, member, expected):
     with tempfile.TemporaryDirectory(dir=BIN) as d:
         archive = Path(d) / "archive"
@@ -47,7 +54,9 @@ def install(name, url, member, expected):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--loki-only", action="store_true", help="install just the pinned Loki candidate")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--traces-only", action="store_true", help="install the VictoriaTraces candidate")
+    group.add_argument("--loki-only", action="store_true", help="install just the pinned Loki candidate")
     args = parser.parse_args()
     system = platform.system().lower()
     machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
@@ -56,6 +65,11 @@ if __name__ == "__main__":
     loki, collector = ARCHIVES[system, machine]
     BIN.mkdir(parents=True, exist_ok=True)
     base = "https://github.com"
+    if args.traces_only:
+        asset = f"victoria-traces-{system}-{machine}-v0.13.0.tar.gz"
+        install("victoria-traces", f"{base}/VictoriaMetrics/VictoriaTraces/releases/download/v0.13.0/{asset}",
+                "victoria-traces-prod", TRACE_ARCHIVES[system, machine])
+        raise SystemExit(0)
     member = f"loki-{system}-{machine}"
     install("loki", f"{base}/grafana/loki/releases/download/v3.7.10/{member}.zip", member, loki)
     if args.loki_only:

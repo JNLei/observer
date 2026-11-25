@@ -17,3 +17,5 @@ the remaining recovery gates stay open.
 [Rust-first headless product development](rust-first-headless-slice.md)
 
 The owner approved single-node SQLite custody for sanitized OTLP logs, with Loki 204 as the producer success boundary. [Single-node log custody](single-node-log-custody.md)
+
+Optional durable custody for traces is proposed for future owner review. [Trace custody options](PROPOSED-single-node-trace-custody.md).

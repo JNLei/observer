@@ -7,7 +7,11 @@ the listed dependencies must be available before integrating a later slice.
 The complete acceptance tests apply to the finished capabilities, not merely
 to a directory, a health check, or a mock.
 
-## Current priority — independent review of Headless Backend v0.2
+## Current priority — independent review of Headless Backend v0.3
+
+v0.2 received conditional source-level acceptance for single-node logs. v0.3 adds bounded OTLP traces, a replaceable VictoriaTraces adapter, and tenant-scoped log/trace Evidence operations with current authorization at resolution. Trace producers own retry across outages. Storage selection, durable trace custody, the public schema and full milestone gates remain open. [v0.3 scope and verification](headless-v0.3.md).
+
+## Headless Backend v0.2
 
 The owner accepted v0.1 at `0ad17da760d148c9d203a672aa4516417babd511` and approved bounded SQLite custody for the single-node logs path. v0.2 adds tenant-scoped buffering, crash recovery, independent fresh/replay reservations, and tenant delivery counters. The test oracle compares the spooled IDs and multiplicities with real Loki through the raw and Evidence APIs. Full M3, M4, M5, M6 and TEST-038 remain open. [Custody decision](../adr/single-node-log-custody.md) and [setup, acceptance and limitations](headless-v0.2.md).
 

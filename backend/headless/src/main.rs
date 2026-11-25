@@ -3,11 +3,15 @@ mod admission;
 mod api;
 mod authority;
 mod delivery;
+mod identity;
 mod logs;
+mod otlp;
 mod otlp_json;
 mod query;
 mod spool;
 mod storage;
+mod trace_store;
+mod traces;
 
 use authority::Authority;
 use std::{
@@ -84,6 +88,7 @@ fn run() -> Result<()> {
         auth,
         spool::Spool::open(&dir)?,
         Arc::new(storage::Loki(dir.join("loki.sock:0"))),
+        Arc::new(trace_store::VictoriaTraces(dir.join("traces.sock"))),
     ));
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)

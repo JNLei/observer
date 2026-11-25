@@ -1,7 +1,8 @@
 //! Provisional raw query and Evidence API representations.
 use crate::{
     authority::name_ok,
-    logs::{lower_hex, now_ns, Record},
+    identity::{lower_hex, now_ns},
+    logs::Record,
     Error, Result,
 };
 use serde::{Deserialize, Serialize};
@@ -127,7 +128,8 @@ pub fn result(tenant: &str, source: &str, query: &Query, page: Page, evidence: b
                         "limit": 1
                     },
                     "record_id": r.id,
-                    "producer_id": r.producer_id
+                    "producer_id": r.producer_id,
+                    "identity": r.identity(source)
                 })
             })
             .collect();

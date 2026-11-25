@@ -1,7 +1,7 @@
 //! The fresh request and the recovery worker use the same dispatch checks.
 use crate::{
     api::App,
-    logs::now_ns,
+    identity::now_ns,
     spool::{blocking, Entry, Outcome},
     storage::StoreError,
     Error, Result,

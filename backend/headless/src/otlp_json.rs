@@ -1,35 +1,39 @@
 //! Decode bounded ProtoJSON using the same OTLP descriptors as the binary receiver.
 use crate::{
-    logs::{BYTE_LIMIT, RECORD_LIMIT, STRUCTURE_LIMIT},
+    otlp::{BYTE_LIMIT, RECORD_LIMIT, STRUCTURE_LIMIT},
     Error, Result,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use prost::Message;
 use prost_reflect::{DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MessageDescriptor};
 use serde_json::Value;
 use std::sync::LazyLock;
 
 const LOG_RECORD: &str = "opentelemetry.proto.logs.v1.LogRecord";
-static LOGS_REQUEST: LazyLock<MessageDescriptor> = LazyLock::new(|| {
-    DescriptorPool::decode(opentelemetry_proto::DESCRIPTORS)
-        .expect("pinned OTLP descriptor set")
-        .get_message_by_name("opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest")
-        .expect("pinned logs request descriptor")
+pub const LOGS_REQUEST: &str = "opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest";
+pub const TRACES_REQUEST: &str = "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest";
+pub static POOL: LazyLock<DescriptorPool> = LazyLock::new(|| {
+    DescriptorPool::decode(opentelemetry_proto::DESCRIPTORS).expect("pinned OTLP descriptors")
 });
-
-pub fn decode(raw: &[u8]) -> Result<ExportLogsServiceRequest> {
+pub fn decode<M: Message + Default>(raw: &[u8], descriptor: &str) -> Result<M> {
+    let desc = POOL
+        .get_message_by_name(descriptor)
+        .expect("pinned OTLP descriptor");
     json_budget(raw)?;
     let mut json: Value = serde_json::from_slice(raw).map_err(|_| Error::Invalid)?;
     let mut remaining = RECORD_LIMIT;
-    adapt_message(&mut json, &LOGS_REQUEST, &mut remaining)?;
-    DynamicMessage::deserialize(LOGS_REQUEST.clone(), json)
+    adapt_message(&mut json, &desc, &mut remaining)?;
+    DynamicMessage::deserialize(desc, json)
         .map_err(|_| Error::Invalid)?
         .transcode_to()
         .map_err(|_| Error::Invalid)
 }
 
 fn adapt_message(json: &mut Value, desc: &MessageDescriptor, remaining: &mut usize) -> Result<()> {
-    if desc.full_name() == LOG_RECORD {
+    if matches!(
+        desc.full_name(),
+        LOG_RECORD | "opentelemetry.proto.trace.v1.Span"
+    ) {
         *remaining = remaining.checked_sub(1).ok_or(Error::TooLarge)?;
     }
     let fields = json.as_object_mut().ok_or(Error::Invalid)?;
@@ -61,10 +65,7 @@ fn adapt_value(value: &mut Value, field: &FieldDescriptor, remaining: &mut usize
     match field.kind() {
         Kind::Message(message) => adapt_message(value, &message, remaining)?,
         Kind::Enum(_) if !value.is_i64() && !value.is_u64() => return Err(Error::Invalid),
-        Kind::Bytes
-            if field.parent_message().full_name() == LOG_RECORD
-                && matches!(field.name(), "trace_id" | "span_id") =>
-        {
+        Kind::Bytes if matches!(field.name(), "trace_id" | "span_id" | "parent_span_id") => {
             let bytes =
                 hex::decode(value.as_str().ok_or(Error::Invalid)?).map_err(|_| Error::Invalid)?;
             *value = Value::String(STANDARD.encode(bytes));
@@ -172,7 +173,6 @@ fn json_budget(data: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use opentelemetry_proto::tonic::common::v1::any_value;
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
             {"timeUnixNano":null,"observedTimeUnixNano":"1.5e1","body":{"doubleValue":"Infinity"}},
             {"body":{"doubleValue":"-Infinity"}},{"body":{"doubleValue":1.00e2}}
         ]}]}]}"#;
-        let request = decode(raw).unwrap();
+        let request = crate::otlp::logs(raw, false, true).unwrap();
         let records = &request.resource_logs[0].scope_logs[0].log_records;
         assert_eq!(records[0].time_unix_nano, 1_800_000_000_000_000_001);
         assert_eq!(records[1].time_unix_nano, 0);

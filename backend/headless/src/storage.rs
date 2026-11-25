@@ -1,7 +1,8 @@
 //! Candidate Loki adapter. Only authority-issued grants can address a store.
 use crate::{
     authority::{Capture, Grant},
-    logs::{LogTime, Record, TEXT_BODY_LIMIT},
+    identity::TimestampNs,
+    logs::{Record, TEXT_BODY_LIMIT},
     query::{Page, Query, Truncation},
 };
 use async_trait::async_trait;
@@ -29,7 +30,7 @@ pub enum StoreError {
     Indeterminate,  // lost transport after dispatch, work may still be running
     Deadline,       // expired before dispatch
 }
-type StoreResult<T> = std::result::Result<T, StoreError>;
+pub(crate) type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[async_trait]
 pub trait LogStore: Send + Sync {
@@ -85,10 +86,10 @@ where
     result
 }
 
-impl Loki {
-    async fn connect(&self) -> StoreResult<Exchange> {
+impl Exchange {
+    pub(crate) async fn connect(path: &std::path::Path) -> StoreResult<Exchange> {
         timeout(Duration::from_secs(1), async {
-            let stream = UnixStream::connect(&self.0)
+            let stream = UnixStream::connect(path)
                 .await
                 .map_err(|_| StoreError::Offline)?;
             let pid = stream
@@ -113,7 +114,7 @@ impl Loki {
     }
 }
 
-struct Exchange {
+pub(crate) struct Exchange {
     sender: http1::SendRequest<Full<Bytes>>,
     pid: i32,
     _transport: JoinSet<std::result::Result<(), hyper::Error>>,
@@ -121,14 +122,13 @@ struct Exchange {
 
 impl Exchange {
     async fn request(
-        mut self,
+        self,
         grant: &Grant,
         method: Method,
         path: String,
         body: Vec<u8>,
         deadline: Option<Instant>,
     ) -> StoreResult<(u16, Bytes)> {
-        let write = method == Method::POST;
         let mut builder = Request::builder()
             .method(method)
             .uri(path)
@@ -150,6 +150,11 @@ impl Exchange {
         let req = builder
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| StoreError::Offline)?;
+        self.perform(req).await
+    }
+
+    pub(crate) async fn perform(mut self, req: Request<Full<Bytes>>) -> StoreResult<(u16, Bytes)> {
+        let write = req.method() == Method::POST;
         let exchange = async {
             let response = self
                 .sender
@@ -196,7 +201,7 @@ impl LogStore for Loki {
         now_ns.saturating_sub(48 * 60 * MINUTE)..=now_ns.saturating_add(10 * MINUTE)
     }
     async fn writer(&self) -> StoreResult<Box<dyn LogWriter>> {
-        Ok(Box::new(self.connect().await?))
+        Ok(Box::new(Exchange::connect(&self.0).await?))
     }
     async fn scan(&self, grant: &Grant, q: &Query, deadline: Instant) -> StoreResult<Page> {
         let limit = page_limit(q.limit, grant.capture);
@@ -220,8 +225,7 @@ impl LogStore for Loki {
             q.end_ns,
             limit + 1
         );
-        let (code, bytes) = self
-            .connect()
+        let (code, bytes) = Exchange::connect(&self.0)
             .await?
             .request(grant, Method::GET, path, vec![], Some(deadline))
             .await?;
@@ -279,7 +283,7 @@ struct LokiData {
 }
 #[derive(Deserialize)]
 struct Stream {
-    values: Vec<(LogTime, String)>,
+    values: Vec<(TimestampNs, String)>,
 }
 
 fn decode_page(bytes: &[u8], grant: &Grant, query: &Query, limit: usize) -> StoreResult<Page> {

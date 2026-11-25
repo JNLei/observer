@@ -1,0 +1,9 @@
+# Proposed decision on optional single-node trace custody
+
+**Status is proposed for owner review.** v0.3 forwards sanitized spans directly to the trace store. Its success boundary is downstream admission. Producer retries remain the recovery mechanism when that store is unavailable.
+
+The accepted v0.2 spool serializes log records and binds replay to a Loki write window, tenant grant, peer process and a specific HTTP 204 settlement. Trace exports have different payloads, permissions, downstream replies and retry identities. Sharing the log queue would also let a trace backlog consume reserved log capacity. [Accepted log custody](single-node-log-custody.md).
+
+If Observe is to take custody of traces after a failed or disconnected request, the proposed default is an independently bounded SQLite trace queue on the same private node. Reuse the transaction and dispatch principles. Persist only sanitized submissions, their stable record IDs, tenant account, credential attribution and policy. A retry of a queued item must preserve these fields. Keep separate delivery state, replay scheduling, limits and residual-work charges. Producer success would still require downstream acknowledgement and local settlement. This would change failure ownership and requires approval before implementation.
+
+Alternatives are continued producer-side buffering, which adds no Observe recovery responsibility, or a separately operated durable broker, which adds deployment, authorization, retention and settlement boundaries. Before adopting trace custody, test process crashes on both sides of dispatch, duplicate visibility, revocation and expiration, space exhaustion, fresh progress during replay, and isolation from log recovery. Decide retention and disposal for held records, and qualify restore behavior separately. Relevant gates include REQ-025/029/035/036, ADR-I4/I5 and ADR-REC-01–06, and TEST-030/032–036/043/051.

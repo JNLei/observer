@@ -2,7 +2,8 @@
 //! commits on the same SQLite connection. Network I/O never owns this lock.
 use crate::{
     authority::{check_private, Grant},
-    logs::{now_ns, Record},
+    identity::now_ns,
+    logs::Record,
     Error, Result,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};

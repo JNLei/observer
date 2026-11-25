@@ -1,6 +1,6 @@
 [package]
 name = "observe-backend"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 publish = false
 
@@ -16,7 +16,7 @@ httpdate = "1"
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 libc = "0.2"
-opentelemetry-proto = { version = "=0.33.1", default-features = false, features = ["gen-tonic-messages", "logs", "file-descriptors"] }
+opentelemetry-proto = { version = "=0.33.1", default-features = false, features = ["gen-tonic-messages", "logs", "trace", "file-descriptors"] }
 percent-encoding = "2"
 prost = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }

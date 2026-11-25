@@ -14,6 +14,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo build --locked --workspace
 python3 backend/headless/tests/test_headless.py -v AuthorityTests ControlledStore
+python3 backend/headless/tests/test_traces.py -v TraceFailures
 
 (
     cd benchmarks/ingest/go
